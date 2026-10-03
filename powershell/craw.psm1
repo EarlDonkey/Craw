@@ -1,40 +1,56 @@
 # Craw.psm1 — Craw's face in PowerShell.
-#
-# Import this in your $PROFILE:
-#   Import-Module C:\Users\user\Downloads\Craw\powershell\Craw.psm1
-#
-# Then Craw lives in your prompt.
 
 $script:CrawPipe = "\\.\pipe\craw"
 $script:CrawFallback = "•"
 
+function Start-CrawDaemon {
+    $root = "C:\Users\user\Downloads\Craw"
+    Start-Process -FilePath "py" `
+        -ArgumentList "-m","craw" `
+        -WorkingDirectory $root `
+        -WindowStyle Hidden
+    Start-Sleep -Milliseconds 2000
+}
+
 function Get-CrawResponse {
     [CmdletBinding()]
-    param()
-    try {
-        $client = New-Object System.IO.Pipes.NamedPipeClientStream(
-            ".", "craw", [System.IO.Pipes.PipeDirection]::InOut
-        )
-        $client.Connect(200)
+    param([hashtable]$Request)
+
+    if (-not $Request) { $Request = @{ ask = "face" } }
+    $json = $Request | ConvertTo-Json -Compress
+
+    foreach ($attempt in 1..2) {
         try {
-            $writer = New-Object System.IO.StreamWriter($client)
-            $reader = New-Object System.IO.StreamReader($client)
-            $writer.WriteLine('{"ask":"face"}')
-            $writer.Flush()
-            $line = $reader.ReadLine()
-            return ($line | ConvertFrom-Json)
-        } finally {
-            $client.Dispose()
+            $client = New-Object System.IO.Pipes.NamedPipeClientStream(
+                ".", "craw", [System.IO.Pipes.PipeDirection]::InOut
+            )
+            $client.Connect(500)
+            try {
+                $writer = New-Object System.IO.StreamWriter($client)
+                $reader = New-Object System.IO.StreamReader($client)
+                $writer.WriteLine($json)
+                $writer.Flush()
+                $line = $reader.ReadLine()
+                if (-not $line) { throw "empty response" }
+                return ($line | ConvertFrom-Json)
+            } finally {
+                $client.Dispose()
+            }
+        } catch {
+            if ($attempt -eq 1) {
+                Start-CrawDaemon
+            } else {
+                return $null
+            }
         }
-    } catch {
-        return $null
     }
+    return $null
 }
 
 function Get-CrawPrompt {
     [CmdletBinding()]
     param()
-    $r = Get-CrawResponse
+    $r = Get-CrawResponse -Request @{ ask = "face" }
     if (-not $r) {
         return "$script:CrawFallback "
     }
@@ -58,36 +74,22 @@ function Get-CrawPrompt {
     return "$glyph "
 }
 
-# Override the prompt. This is the magic.
 function prompt {
     $glyph = Get-CrawPrompt
     $path = (Get-Location).Path
-    # Craw's face, then the path, then the caret
     Write-Host $glyph -NoNewline -ForegroundColor Green
     Write-Host "$path" -NoNewline
     return "> "
 }
 
-# A `craw` command so you can talk to it from the shell.
 function craw {
     [CmdletBinding()]
     param([Parameter(ValueFromRemainingArguments=$true)]$Args)
     $text = ($Args -join ' ').Trim()
-    $obj = if ($text) { @{ ask = "say"; text = $text } } else { @{ ask = "face" } }
-    $req = $obj | ConvertTo-Json -Compress
+    $req = if ($text) { @{ ask = "say"; text = $text } } else { @{ ask = "face" } }
+    $r = Get-CrawResponse -Request $req
 
-    try {
-        $client = New-Object System.IO.Pipes.NamedPipeClientStream(".", "craw", [System.IO.Pipes.PipeDirection]::InOut)
-        $client.Connect(300)
-        try {
-            $writer = New-Object System.IO.StreamWriter($client)
-            $reader = New-Object System.IO.StreamReader($client)
-            $writer.WriteLine($req)
-            $writer.Flush()
-            $line = $reader.ReadLine()
-            $r = $line | ConvertFrom-Json
-        } finally { $client.Dispose() }
-    } catch {
+    if (-not $r) {
         Write-Host "craw: not running" -ForegroundColor Red
         return
     }
@@ -117,15 +119,32 @@ function craw-unmute {
 }
 
 function craw-mute-mic {
+    [CmdletBinding()]
+    param()
     $r = Get-CrawResponse -Request @{ ask = "mute_mic" }
     if ($r) { Write-Host "craw can't hear you." -ForegroundColor DarkGray }
     else { Write-Host "craw: not running" -ForegroundColor Red }
 }
 
 function craw-unmute-mic {
+    [CmdletBinding()]
+    param()
     $r = Get-CrawResponse -Request @{ ask = "unmute_mic" }
     if ($r) { Write-Host "craw is listening." -ForegroundColor Green }
     else { Write-Host "craw: not running" -ForegroundColor Red }
 }
 
-Export-ModuleMember -Function prompt, craw, craw-mute, craw-unmute, Get-CrawResponse, Get-CrawPrompt, craw-mute-mic, craw-unmute-mic
+function craw-name {
+    [CmdletBinding()]
+    param([Parameter(ValueFromRemainingArguments=$true)]$Name)
+    $text = ($Name -join ' ').Trim()
+    if (-not $text) {
+        Write-Host "usage: craw-name <your name>" -ForegroundColor Yellow
+        return
+    }
+    $r = Get-CrawResponse -Request @{ ask = "name"; text = $text }
+    if ($r) { Write-Host $r.message.text -ForegroundColor Cyan }
+    else { Write-Host "craw: not running" -ForegroundColor Red }
+}
+
+Export-ModuleMember -Function prompt, craw, craw-mute, craw-unmute, craw-mute-mic, craw-unmute-mic, craw-name, Get-CrawResponse, Get-CrawPrompt

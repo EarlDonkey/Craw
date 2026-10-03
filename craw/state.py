@@ -24,9 +24,13 @@ class State:
     born_at: float = field(default_factory=time.time)
     last_seen_at: float = field(default_factory=time.time)
     last_spoke_at: float = 0.0
-    hunger: float = 0.0      # 0 = full, 1 = starving for attention
-    energy: float = 1.0      # 0 = exhausted, 1 = rested
-    mood: str = "curious"    # derived, but cached here
+    hunger: float = 0.0
+    energy: float = 1.0
+    mood: str = "curious"
+
+    # identity
+    host_name: str = ""
+    first_met_at: float = field(default_factory=time.time)
 
     # --- derived ---------------------------------------------------------
 
@@ -41,11 +45,7 @@ class State:
     # --- life processes --------------------------------------------------
 
     def tick(self) -> None:
-        """Advance one beat. Called by the daemon every few seconds.
-
-        Hunger grows with silence. Energy drains with hunger. Mood is a
-        function of both plus the hour of day.
-        """
+        """Advance one beat. Called by the daemon every few seconds."""
         silence = self.silence_seconds
         # hunger rises ~1.0 over 6 hours of silence
         self.hunger = min(1.0, silence / (6 * 3600))
@@ -74,6 +74,15 @@ class State:
         """Craw said something. Mark it."""
         self.last_spoke_at = time.time()
 
+    def set_host_name(self, name: str) -> None:
+        """Remember what to call you. Does nothing if name is empty."""
+        cleaned = name.strip()
+        if not cleaned:
+            return
+        self.host_name = cleaned
+        if self.first_met_at == 0.0:
+            self.first_met_at = time.time()
+
     # --- persistence -----------------------------------------------------
 
     def save(self) -> None:
@@ -87,4 +96,7 @@ class State:
             s.save()
             return s
         data = json.loads(STATE_PATH.read_text())
+        # Tolerate schema drift: drop keys we no longer have.
+        valid = {f.name for f in cls.__dataclass_fields__.values()}
+        data = {k: v for k, v in data.items() if k in valid}
         return cls(**data)

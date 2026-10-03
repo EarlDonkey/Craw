@@ -10,11 +10,22 @@ Never used for the face. Only used for speech.
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 DEFAULT_MODEL = "llama3.2:3b"
+
+
+# Word-boundary replacements for the 3B model's most persistent tic:
+# talking about you in the third person. Order matters — longer first.
+_THIRD_PERSON_FIXES = [
+    (re.compile(r"\bthe user's\b", re.IGNORECASE), "your"),
+    (re.compile(r"\bthe user\b", re.IGNORECASE), "you"),
+    (re.compile(r"\bthe person's\b", re.IGNORECASE), "your"),
+    (re.compile(r"\bthe person\b", re.IGNORECASE), "you"),
+]
 
 
 class LLM:
@@ -75,11 +86,7 @@ class LLM:
         system: str,
         tools_block: str,
     ) -> str:
-        """Same as generate(), but the system prompt includes the tool list.
-
-        Lower temperature, harder stops, and an example. The router wants
-        boring, predictable output — this is the knob that gets it there.
-        """
+        """Same as generate(), but the system prompt includes the tool list."""
         tool_instructions = (
             "\n\nYou have tools. If the user asks you to DO something that "
             "matches a tool, reply with a single JSON object and nothing else:\n"
@@ -117,4 +124,6 @@ class LLM:
     def _tidy(text: str) -> str:
         line = " ".join(text.split())
         line = line.replace("!", ".")
+        for pattern, replacement in _THIRD_PERSON_FIXES:
+            line = pattern.sub(replacement, line)
         return line.strip()

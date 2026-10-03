@@ -193,6 +193,18 @@ class Daemon:
                     message=Message(text="thinking...", kind="reply"),
                 )
 
+        if ask == "name":
+            who = request.get("text", "").strip()
+            if who:
+                self.state.set_host_name(who)
+                self.state.save()
+                log.body(f"host name set: {who}")
+                self.memory.say(f"i learned your name is {who}", who="user")
+                return Response(
+                    face=face,
+                    message=Message(text=f"noted. hello, {who}.", kind="reply"),
+                )
+
         if ask == "mute":
             self.speaker.mute()
             log.body("voice muted")
@@ -239,8 +251,17 @@ class Daemon:
         age_min = self.state.age_seconds / 60
         if self.memory.count() == 0:
             log.body("first breath.")
+        elif not self.state.host_name:
+            log.body(
+                f"woke. age {age_min:.0f}m. "
+                f"{self.memory.count()} memories. i don't know your name yet."
+            )
         else:
-            log.body(f"woke. age {age_min:.0f}m. {self.memory.count()} memories.")
+            log.body(
+                f"woke. age {age_min:.0f}m. "
+                f"{self.memory.count()} memories. "
+                f"hello, {self.state.host_name}."
+            )
 
     def _farewell(self) -> None:
         self.mouth.stop()

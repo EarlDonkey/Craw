@@ -22,6 +22,12 @@ def build(memory: Memory, state: State, *, recent_limit: int = 15) -> str:
     lines.append(f"Mood: {state.mood}.")
     hour = time.localtime().tm_hour
     lines.append(f"Local time: {hour:02d}:00.")
+
+    if state.host_name:
+        lines.append(f"The person you are speaking to is {state.host_name}.")
+    else:
+        lines.append("You do not yet know the person's name.")
+
     lines.append("")
 
     recent_obs = memory.recent("observation", limit=recent_limit)
