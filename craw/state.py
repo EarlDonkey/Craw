@@ -11,9 +11,9 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from platformdirs import user_data_dir
-
-CRAW_HOME = Path(user_data_dir("craw", "craw"))
+# Craw's body lives inside the repo while we raise it.
+# Before publishing, we'll move this to platformdirs.
+CRAW_HOME = Path(__file__).resolve().parent.parent / ".craw"
 STATE_PATH = CRAW_HOME / "state.json"
 
 
