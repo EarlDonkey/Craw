@@ -24,6 +24,7 @@ from craw.brain.mouth_state import MouthState
 from craw.brain.reflexes import Reflexes
 from craw.brain.voice import answer, compose
 from craw.brain.will import Will
+from craw.brain.voice_out import Speaker
 from craw.mouth.ipc import Mouth
 from craw.mouth.protocol import Message, Response, face_for_mood
 from craw.senses.base import Sense
@@ -53,6 +54,8 @@ class Daemon:
         self._just_ingested_history = False
         self.will = Will.load()
         self.mouth = Mouth(self._handle_request)
+        self.speaker = Speaker()
+
 
     # --- lifecycle --------------------------------------------------------
 
@@ -141,7 +144,7 @@ class Daemon:
                 self.state.speak()
                 log.speak(line)
                 self.mouth_state.queue(line, kind="thought")
-
+                self.speaker.say(line)
     def _breathe(self) -> None:
         self.state.save()
         log.body(
@@ -184,6 +187,7 @@ class Daemon:
             self.memory.say(question, who="user")
             self.memory.say(reply, who="craw")
             self.mouth_state.queue(reply, kind="reply")
+            self.speaker.say(reply)
         except Exception as exc:
             log.body(f"answer errored: {exc!r}")
 
