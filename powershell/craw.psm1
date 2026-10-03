@@ -116,4 +116,16 @@ function craw-unmute {
     else { Write-Host "craw: not running" -ForegroundColor Red }
 }
 
-Export-ModuleMember -Function prompt, craw, craw-mute, craw-unmute, Get-CrawResponse, Get-CrawPrompt
+function craw-mute-mic {
+    $r = Get-CrawResponse -Request @{ ask = "mute_mic" }
+    if ($r) { Write-Host "craw can't hear you." -ForegroundColor DarkGray }
+    else { Write-Host "craw: not running" -ForegroundColor Red }
+}
+
+function craw-unmute-mic {
+    $r = Get-CrawResponse -Request @{ ask = "unmute_mic" }
+    if ($r) { Write-Host "craw is listening." -ForegroundColor Green }
+    else { Write-Host "craw: not running" -ForegroundColor Red }
+}
+
+Export-ModuleMember -Function prompt, craw, craw-mute, craw-unmute, Get-CrawResponse, Get-CrawPrompt, craw-mute-mic, craw-unmute-mic

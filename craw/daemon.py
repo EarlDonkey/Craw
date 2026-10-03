@@ -29,6 +29,7 @@ from craw.mouth.ipc import Mouth
 from craw.mouth.protocol import Message, Response, face_for_mood
 from craw.senses.base import Sense
 from craw.senses.shell import ShellSense
+from craw.senses.audio import Ears
 from craw.state import State
 
 
@@ -55,6 +56,7 @@ class Daemon:
         self.will = Will.load()
         self.mouth = Mouth(self._handle_request)
         self.speaker = Speaker()
+        self.ears = Ears(self._on_utterance)
 
 
     # --- lifecycle --------------------------------------------------------
@@ -62,6 +64,7 @@ class Daemon:
     def run(self) -> None:
         self._install_signals()
         self.mouth.start()
+        self.ears.start()
         self._running = True
         self._greet()
         while self._running:
@@ -78,7 +81,18 @@ class Daemon:
             signal.signal(signal.SIGTERM, self.stop)
         except (AttributeError, ValueError):
             pass  # Windows doesn't always support SIGTERM cleanly
-
+    
+    
+    def _on_utterance(self, text: str) -> None:
+        """Craw heard you say something. Route it like `craw ask`."""
+        log.body(f"heard: {text[:80]}")
+        threading.Thread(
+            target=self._answer_later,
+            args=(text,),
+            daemon=True,
+        ).start()
+    
+    
     # --- the beat ---------------------------------------------------------
 
     def _beat(self) -> None:
@@ -179,12 +193,26 @@ class Daemon:
         if ask == "mute":
             self.speaker.mute()
             log.body("voice muted")
+            self.memory.say("craw muted", who="user")
+            self.memory.say("voice muted.", who="craw")
             return Response(face=face, message=Message(text="voice muted.", kind="reply"))
 
         if ask == "unmute":
             self.speaker.unmute()
             log.body("voice unmuted")
+            self.memory.say("craw unmuted", who="user")
+            self.memory.say("voice back.", who="craw")
             return Response(face=face, message=Message(text="voice back.", kind="reply"))
+        
+        if ask == "mute_mic":
+            self.ears.mute()
+            log.body("mic muted")
+            return Response(face=face, message=Message(text="i can't hear you.", kind="reply"))
+
+        if ask == "unmute_mic":
+            self.ears.unmute()
+            log.body("mic unmuted")
+            return Response(face=face, message=Message(text="i'm listening.", kind="reply"))
 
         text, kind = self.mouth_state.take()
         return Response(face=face, message=Message(text=text, kind=kind))
@@ -214,5 +242,6 @@ class Daemon:
 
     def _farewell(self) -> None:
         self.mouth.stop()
+        self.ears.stop()
         self.state.save()
         log.body("going quiet.")
