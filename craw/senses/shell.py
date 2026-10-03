@@ -11,11 +11,15 @@ from __future__ import annotations
 
 import os
 import time
+import json
+from craw.state import CRAW_HOME
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
 from craw.senses.base import Observation
+
+CHECKPOINT_PATH = CRAW_HOME / "shell_checkpoint.json"
 
 
 # Where PSReadLine keeps history. Same on Windows PowerShell and PowerShell 7.
@@ -48,9 +52,22 @@ class ShellSense:
 
     def __init__(self) -> None:
         self.path = _history_path()
-        self._last_count = 0  # how many lines we've already ingested
+        self._last_count = self._load_checkpoint()  # how many lines we've already ingested
         self._seen_repeat: dict[str, float] = {}  # cmd -> last time we flagged it
 
+    
+    def _load_checkpoint(self) -> int:
+        if not CHECKPOINT_PATH.exists():
+            return 0
+        try:
+            return int(json.loads(CHECKPOINT_PATH.read_text())["count"])
+        except (OSError, ValueError, KeyError):
+            return 0
+
+    def _save_checkpoint(self) -> None:
+        CRAW_HOME.mkdir(parents=True, exist_ok=True)
+        CHECKPOINT_PATH.write_text(json.dumps({"count": self._last_count}))
+    
     # --- main -------------------------------------------------------------
 
     def sense(self) -> list[Observation]:
@@ -79,6 +96,7 @@ class ShellSense:
         return [Command(text=line.strip(), index=i) for i, line in enumerate(lines) if line.strip()]
 
     # --- observing --------------------------------------------------------
+    
 
     def _observe_batch(self, commands: list[Command], *, retrospective: bool) -> list[Observation]:
         """Turn a batch of commands into observations.
@@ -105,7 +123,10 @@ class ShellSense:
                     source="shell",
                 )
             )
-
+        
+        if retrospective:
+            return out  # don't do pattern detection on retrospective history
+        
         # 2. Repetition — same command 3+ times within the batch.
         counts = Counter(c.text for c in commands if c.text not in _NOISE)
         for cmd, n in counts.most_common():

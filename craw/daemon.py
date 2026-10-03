@@ -17,6 +17,10 @@ import signal
 import time
 from dataclasses import dataclass
 
+from pyparsing import line
+
+from craw.brain import Will, compose
+
 from craw import log
 from craw.brain.memory import Memory
 from craw.brain.reflexes import Reflexes
@@ -43,6 +47,8 @@ class Daemon:
         self._last_sense = 0.0
         self._last_reflex = 0.0
         self._last_breathe = 0.0
+        self._just_ingested_history = False
+        self.will = Will.load()
 
     # --- lifecycle --------------------------------------------------------
 
@@ -89,16 +95,21 @@ class Daemon:
         for s in self.senses:
             try:
                 obs = s.sense()
-            except Exception as exc:  # a broken sense must not kill the daemon
+            except Exception as exc:
                 log.sense(f"{s.name} errored: {exc!r}")
                 continue
             if not obs:
                 continue
+            if any(o.meta.get("mode") == "history" for o in obs):
+                self._just_ingested_history = True
             for o in obs:
                 self.memory.observe(o.text, **o.meta)
             log.sense(f"{s.name}: {len(obs)} observations")
 
     def _run_reflexes(self) -> None:
+        if self.memory.count("Obeservation") > 0 and self._just_ingested_history:
+            self._just_ingested_history = False
+            return
         impulses = self.reflexes.scan()
         if not impulses:
             return
@@ -111,6 +122,11 @@ class Daemon:
                 urgency=imp.urgency,
                 evidence=[e.id for e in imp.evidence],
             )
+        if self.will.should_speak(imp):
+            line = compose(imp)
+            self.will.spoke()
+            self.state.speak()
+            log.speak(line)
 
     def _breathe(self) -> None:
         self.state.save()

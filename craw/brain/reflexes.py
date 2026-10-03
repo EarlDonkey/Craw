@@ -53,10 +53,12 @@ class Reflexes:
         return out
 
     def _repetition(self) -> list[Impulse]:
-        """Same command many times in the last hour."""
+        """Same command many times in the last hour — live only."""
         recent = self.memory.since("observation", 3600)
         counts: dict[str, list[Entry]] = {}
         for e in recent:
+            if e.meta.get("mode") != "live":
+                continue  # retrospective history is context, not a trigger
             cmd = e.meta.get("command")
             if not cmd:
                 continue
@@ -69,7 +71,7 @@ class Reflexes:
                         reason="repetition",
                         subject=f"you ran `{cmd}` {len(entries)} times in the last hour",
                         evidence=entries[-5:],
-                        urgency=min(1.0, len(entries) / 12),
+                    urgency=min(1.0, len(entries) / 12),
                     )
                 )
         return out
