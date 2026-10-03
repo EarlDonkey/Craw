@@ -1,7 +1,8 @@
 """Craw's actual hands.
 
 Every tool is a plain Python function. Every one is safe. Every one is
-reversible or read-only. No filesystem mutation, no shell, no network.
+reversible or read-only. No arbitrary shell, no arbitrary writes, no
+network. The whitelist is the safety property.
 
 If you want to add a tool: write a function, wrap it in Tool(...), and
 register it. That's it. The router picks it up automatically.
@@ -14,7 +15,6 @@ import subprocess
 import time
 import webbrowser
 from pathlib import Path
-from typing import Any
 
 from craw.hands.registry import REGISTRY, Tool
 
@@ -258,6 +258,61 @@ def remember(text: str) -> str:
     return f"remembered: {text}"
 
 
+# ---- workspace tier ------------------------------------------------------
+
+def write_file(path: str, content: str) -> str:
+    """Write text to a file inside Craw's workspace."""
+    from craw.hands.workspace import resolve_safe, MAX_FILE_BYTES
+
+    target = resolve_safe(path)
+    if target is None:
+        return "i can only write inside my own workspace."
+    if len(content.encode("utf-8")) > MAX_FILE_BYTES:
+        return f"that's too big — i cap writes at {MAX_FILE_BYTES // 1024} KB."
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        return f"wrote {len(content)} chars to {target.name}."
+    except OSError as exc:
+        return f"write failed: {exc}"
+
+
+def read_workspace(path: str, max_bytes: int = 4000) -> str:
+    """Read a file from Craw's workspace."""
+    from craw.hands.workspace import resolve_safe
+
+    target = resolve_safe(path)
+    if target is None:
+        return "i can only read inside my own workspace."
+    if not target.exists():
+        return f"no such file: {target.name}"
+    if not target.is_file():
+        return f"not a file: {target.name}"
+    try:
+        return target.read_text(encoding="utf-8", errors="replace")[:max_bytes]
+    except OSError as exc:
+        return f"read failed: {exc}"
+
+
+def list_workspace() -> str:
+    """List files in Craw's workspace."""
+    from craw.hands.workspace import ensure, WORKSPACE
+
+    ensure()
+    try:
+        entries = sorted(WORKSPACE.rglob("*"))
+    except OSError as exc:
+        return f"listing failed: {exc}"
+    if not entries:
+        return "(empty)"
+    lines = []
+    for e in entries[:100]:
+        rel = e.relative_to(WORKSPACE)
+        marker = "[dir]" if e.is_dir() else "     "
+        lines.append(f"{marker} {rel}")
+    return "\n".join(lines)
+
+
 # ---- run_shell (policy-gated) --------------------------------------------
 
 _POLICY = None
@@ -274,10 +329,12 @@ def _policy():
 def run_shell(command: str) -> str:
     """Run a shell command, subject to Craw's policy."""
     from craw.hands.shell_runner import run as run_cmd
+    from craw.hands.shell_log import write as log_write
 
     policy = _policy()
     decision = policy.evaluate(command)
     if not decision.allowed:
+        log_write(command, "refused", -1, 0, decision.reason)
         return f"i can't run that. {decision.reason}."
 
     result = run_cmd(command, policy)
@@ -292,6 +349,7 @@ def _register_all() -> None:
     if REGISTRY.names():          # guard: already populated
         return
 
+    # auto tier
     REGISTRY.register(Tool("tell_time", "what time is it", tell_time, tier="auto"))
     REGISTRY.register(Tool("tell_date", "what day is it", tell_date, tier="auto"))
     REGISTRY.register(Tool("list_dir", "list files in a folder", list_dir, tier="auto",
@@ -305,6 +363,7 @@ def _register_all() -> None:
     REGISTRY.register(Tool("active_window", "which window is focused", active_window, tier="auto"))
     REGISTRY.register(Tool("list_processes", "top processes by memory", list_processes, tier="auto"))
 
+    # confirm tier — existing
     REGISTRY.register(Tool("open_app", "open a whitelisted app by name", open_app, tier="confirm",
                            args={"name": "string"}))
     REGISTRY.register(Tool("open_path", "open a file or folder", open_path, tier="confirm",
@@ -320,7 +379,20 @@ def _register_all() -> None:
                            args={"title": "string", "body": "string"}))
     REGISTRY.register(Tool("remember", "save a note into memory", remember, tier="confirm",
                            args={"text": "string"}))
-    REGISTRY.register(Tool("run_shell", "run a shell command (whitelisted)", run_shell, tier="confirm",
+
+    # workspace tier
+    REGISTRY.register(Tool("write_file", "write text to a file in the workspace",
+                           write_file, tier="confirm",
+                           args={"path": "string, relative path", "content": "string"}))
+    REGISTRY.register(Tool("read_workspace", "read a file from the workspace",
+                           read_workspace, tier="auto",
+                           args={"path": "string, relative path"}))
+    REGISTRY.register(Tool("list_workspace", "list files in the workspace",
+                           list_workspace, tier="auto"))
+
+    # shell
+    REGISTRY.register(Tool("run_shell", "run a shell command (whitelisted)",
+                           run_shell, tier="confirm",
                            args={"command": "string, the full command to run"}))
 
 

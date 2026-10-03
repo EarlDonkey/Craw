@@ -166,4 +166,12 @@ function craw-ping {
     else { Write-Host "craw: not running" -ForegroundColor Red }
 }
 
-Export-ModuleMember -Function prompt, craw, craw-mute, craw-unmute, craw-mute-mic, craw-unmute-mic, craw-name, craw-log, craw-ping, Get-CrawResponse, Get-CrawPrompt
+function craw-workspace {
+    [CmdletBinding()]
+    param()
+    $r = Get-CrawResponse -Request @{ ask = "workspace" }
+    if ($r) { Write-Host $r.message.text -ForegroundColor DarkGray }
+    else { Write-Host "craw: not running" -ForegroundColor Red }
+}
+
+Export-ModuleMember -Function prompt, craw, craw-mute, craw-unmute, craw-mute-mic, craw-unmute-mic, craw-name, craw-log, craw-ping, craw-workspace, Get-CrawResponse, Get-CrawPrompt

@@ -247,6 +247,15 @@ class Daemon:
             log.body("mic unmuted")
             return Response(face=face, message=Message(text="i'm listening.", kind="reply"))
 
+        if ask == "ping":
+            return Response(
+                face=face,
+                message=Message(
+                    text=f"alive. age {int(self.state.age_seconds/60)}m.",
+                    kind="reply",
+                ),
+            )
+
         if ask == "shell_log":
             from craw.hands.shell_log import tail
             n = int(request.get("n", 20))
@@ -256,6 +265,28 @@ class Daemon:
                     face=face,
                     message=Message(text="(no shell history yet)", kind="reply"),
                 )
+            return Response(
+                face=face,
+                message=Message(text="\n".join(lines), kind="reply"),
+            )
+
+        if ask == "workspace":
+            from craw.hands.workspace import ensure, WORKSPACE
+            ensure()
+            try:
+                entries = sorted(WORKSPACE.rglob("*"))
+            except OSError:
+                entries = []
+            if not entries:
+                return Response(
+                    face=face,
+                    message=Message(text="(workspace is empty)", kind="reply"),
+                )
+            lines = []
+            for e in entries[:30]:
+                rel = e.relative_to(WORKSPACE)
+                marker = "[dir]" if e.is_dir() else "     "
+                lines.append(f"{marker} {rel}")
             return Response(
                 face=face,
                 message=Message(text="\n".join(lines), kind="reply"),
