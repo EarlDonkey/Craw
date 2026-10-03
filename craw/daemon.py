@@ -58,7 +58,6 @@ class Daemon:
         self.speaker = Speaker()
         self.ears = Ears(self._on_utterance)
 
-
     # --- lifecycle --------------------------------------------------------
 
     def run(self) -> None:
@@ -80,19 +79,27 @@ class Daemon:
         try:
             signal.signal(signal.SIGTERM, self.stop)
         except (AttributeError, ValueError):
-            pass  # Windows doesn't always support SIGTERM cleanly
-    
-    
+            pass
+
+    # --- ears -------------------------------------------------------------
+
+    _BLOCKED_WORDS = {"nigger", "faggot", "retard"}
+
     def _on_utterance(self, text: str) -> None:
         """Craw heard you say something. Route it like `craw ask`."""
-        log.body(f"heard: {text[:80]}")
+        t = text.lower().strip()
+        if len(t.split()) < 3:
+            return
+        if any(b in t for b in self._BLOCKED_WORDS):
+            log.body(f"heard (blocked): {t[:60]}")
+            return
+        log.body(f"heard: {t[:80]}")
         threading.Thread(
             target=self._answer_later,
             args=(text,),
             daemon=True,
         ).start()
-    
-    
+
     # --- the beat ---------------------------------------------------------
 
     def _beat(self) -> None:
@@ -132,8 +139,6 @@ class Daemon:
             log.sense(f"{s.name}: {len(obs)} observations")
 
     def _run_reflexes(self) -> None:
-        # Don't react to retrospective history. First run is for learning,
-        # not for talking. Live mode only.
         if self._just_ingested_history:
             self._just_ingested_history = False
             return
@@ -142,14 +147,12 @@ class Daemon:
             return
         for imp in impulses:
             log.reflex(f"[{imp.reason}] {imp.subject}  (urgency {imp.urgency:.2f})")
-            # Every impulse becomes a *thought*.
             self.memory.think(
                 imp.subject,
                 reason=imp.reason,
                 urgency=imp.urgency,
                 evidence=[e.id for e in imp.evidence],
             )
-            # A few become *spoken*.
             if self.will.should_speak(imp):
                 line = compose(imp, self.memory, self.state)
                 if not line:
@@ -159,6 +162,7 @@ class Daemon:
                 log.speak(line)
                 self.mouth_state.queue(line, kind="thought")
                 self.speaker.say(line)
+
     def _breathe(self) -> None:
         self.state.save()
         log.body(
@@ -179,7 +183,6 @@ class Daemon:
         if ask == "say":
             question = request.get("text", "").strip()
             if question:
-                # Hand off to a background thread so the pipe replies instantly.
                 threading.Thread(
                     target=self._answer_later,
                     args=(question,),
@@ -189,7 +192,7 @@ class Daemon:
                     face=face,
                     message=Message(text="thinking...", kind="reply"),
                 )
-                
+
         if ask == "mute":
             self.speaker.mute()
             log.body("voice muted")
@@ -203,7 +206,7 @@ class Daemon:
             self.memory.say("craw unmuted", who="user")
             self.memory.say("voice back.", who="craw")
             return Response(face=face, message=Message(text="voice back.", kind="reply"))
-        
+
         if ask == "mute_mic":
             self.ears.mute()
             log.body("mic muted")
@@ -228,7 +231,6 @@ class Daemon:
             self.speaker.say(reply)
         except Exception as exc:
             log.body(f"answer errored: {exc!r}")
-
 
     # --- bookends ---------------------------------------------------------
 

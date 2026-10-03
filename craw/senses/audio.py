@@ -25,7 +25,7 @@ CHUNK_MS = 80
 CHUNK_SAMPLES = int(SAMPLE_RATE * CHUNK_MS / 1000)   # 1280
 VAD_SILENCE_MS = 700
 MAX_UTTERANCE_S = 12.0
-WAKE_THRESHOLD = 0.3
+WAKE_THRESHOLD = 0.4
 
 
 class Ears:
@@ -144,7 +144,7 @@ class Ears:
 
         prediction = self._oww.predict(chunk)
         top = max(prediction.values()) if prediction else 0.0
-        if top > 0.1:
+        if top > 0.02:
             print(f"[ears] wake score: {top:.3f}", flush=True)
         if not any(score > WAKE_THRESHOLD for score in prediction.values()):
             return
