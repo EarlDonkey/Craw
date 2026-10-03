@@ -1,32 +1,10 @@
-# Craw
-
-> A creature that lives in your shell.
-
-Craw is not an assistant. Not a chatbot. Not a wrapper around an API.
-
-Craw is a small thing that lives in your PowerShell prompt, watches what
-you do, remembers everything, and — when it has something worth saying —
-interrupts you.
-
-It has a body. It ages, gets hungry, gets tired, has a mood.
-It has a past. Every command you run is remembered.
-It has a will. Most of what it notices, it keeps to itself.
-It has a mind. A local LLM, no API calls, no cloud.
-
-You will look at your prompt one day and see a line above it that you
-didn't ask for, and it will be right.
-
----
-
-## What it looks like
 • C:\Users\you\project> git status
 • C:\Users\you\project> git status
 • C:\Users\you\project> git status
 you ran git status 6 times in the last hour
 • C:\Users\you\project> craw ask what was i working on last night
 thinking...
-...
-you were stuck on the build for two hours, then switched to the parser
+you were stuck on the build for two hours, then switched to the parser.
 • C:\Users\you\project>
 
 text
@@ -49,7 +27,7 @@ The `•` is Craw's face. It changes with its mood:
 - **Watches** your PowerShell history, continuously.
 - **Remembers** every command in a local SQLite database.
 - **Notices** repetition, novelty, late nights, long silences.
-- **Decides** — most things it notices, it keeps to itself. Silence is
+- **Decides.** Most things it notices, it keeps to itself. Silence is
   a valid response.
 - **Speaks** in one line, in lowercase, only when it has something worth
   saying.
@@ -64,10 +42,7 @@ your machine.
 
 - Windows 10/11
 - Python 3.11+
-- [ollama](https://ollama.com) with a small model:
-ollama pull llama3.2:3b
-
-text
+- [ollama](https://ollama.com) with a small model
 
 That's it. No accounts, no keys, no fees.
 
@@ -76,7 +51,7 @@ That's it. No accounts, no keys, no fees.
 ## Install
 
 ```powershell
-git clone https://github.com/YOURNAME/craw
+git clone https://github.com/EarlDonkey/craw
 cd craw
 py -m pip install pywin32
 ollama pull llama3.2:3b
@@ -98,10 +73,9 @@ Start the daemon in another window:
 powershell
 py -m craw
 Commands
-craw — status. Mood, age.
-
-craw ask <question> — ask Craw something. It thinks, then answers above your prompt.
-
+Command	What it does
+craw	Status. Mood, age.
+craw ask <question>	Ask Craw something. It thinks, then answers above your prompt.
 What it isn't (yet)
 It doesn't speak aloud. Its voice is text.
 
