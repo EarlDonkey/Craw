@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Literal
@@ -50,37 +51,57 @@ CREATE INDEX IF NOT EXISTS idx_entries_kind_at ON entries (kind, at DESC);
 
 
 class Memory:
-    """Craw's past. Open once, use forever, close when the daemon dies."""
-
     def __init__(self, path: Path = DB_PATH) -> None:
         CRAW_HOME.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(path)
+        self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        self.conn.executescript(SCHEMA)
-        self.conn.commit()
+        self._lock = threading.RLock()
+        with self._lock:
+            self.conn.executescript(SCHEMA)
+            self.conn.commit()
 
-    # --- writing ---------------------------------------------------------
-
-    def remember(
-        self,
-        kind: Kind,
-        text: str,
-        meta: dict[str, Any] | None = None,
-    ) -> Entry:
+    def remember(self, kind, text, meta=None) -> Entry:
         at = time.time()
-        cur = self.conn.execute(
-            "INSERT INTO entries (kind, at, text, meta) VALUES (?, ?, ?, ?)",
-            (kind, at, text, json.dumps(meta or {})),
-        )
-        self.conn.commit()
-        return Entry(
-            id=cur.lastrowid,
-            kind=kind,
-            at=at,
-            text=text,
-            meta=meta or {},
-        )
+        with self._lock:
+            cur = self.conn.execute(
+                "INSERT INTO entries (kind, at, text, meta) VALUES (?, ?, ?, ?)",
+                (kind, at, text, json.dumps(meta or {})),
+            )
+            self.conn.commit()
+        return Entry(id=cur.lastrowid, kind=kind, at=at, text=text, meta=meta or {})
 
+    def recent(self, kind=None, limit=20) -> list[Entry]:
+        with self._lock:
+            if kind is None:
+                rows = self.conn.execute(
+                    "SELECT * FROM entries ORDER BY at DESC LIMIT ?", (limit,)
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT * FROM entries WHERE kind = ? ORDER BY at DESC LIMIT ?",
+                    (kind, limit),
+                ).fetchall()
+        return [self._row_to_entry(r) for r in rows]
+
+    def since(self, kind, seconds) -> list[Entry]:
+        cutoff = time.time() - seconds
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM entries WHERE kind = ? AND at >= ? ORDER BY at ASC",
+                (kind, cutoff),
+            ).fetchall()
+        return [self._row_to_entry(r) for r in rows]
+
+    def count(self, kind=None) -> int:
+        with self._lock:
+            if kind is None:
+                row = self.conn.execute("SELECT COUNT(*) AS n FROM entries").fetchone()
+            else:
+                row = self.conn.execute(
+                    "SELECT COUNT(*) AS n FROM entries WHERE kind = ?", (kind,)
+                ).fetchone()
+        return int(row["n"])
+    
     def observe(self, text: str, **meta: Any) -> Entry:
         return self.remember("observation", text, meta)
 
@@ -89,37 +110,6 @@ class Memory:
 
     def think(self, text: str, **meta: Any) -> Entry:
         return self.remember("thought", text, meta)
-
-    # --- reading ---------------------------------------------------------
-
-    def recent(self, kind: Kind | None = None, limit: int = 20) -> list[Entry]:
-        if kind is None:
-            rows = self.conn.execute(
-                "SELECT * FROM entries ORDER BY at DESC LIMIT ?", (limit,)
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT * FROM entries WHERE kind = ? ORDER BY at DESC LIMIT ?",
-                (kind, limit),
-            ).fetchall()
-        return [self._row_to_entry(r) for r in rows]
-
-    def since(self, kind: Kind, seconds: float) -> list[Entry]:
-        cutoff = time.time() - seconds
-        rows = self.conn.execute(
-            "SELECT * FROM entries WHERE kind = ? AND at >= ? ORDER BY at ASC",
-            (kind, cutoff),
-        ).fetchall()
-        return [self._row_to_entry(r) for r in rows]
-
-    def count(self, kind: Kind | None = None) -> int:
-        if kind is None:
-            row = self.conn.execute("SELECT COUNT(*) AS n FROM entries").fetchone()
-        else:
-            row = self.conn.execute(
-                "SELECT COUNT(*) AS n FROM entries WHERE kind = ?", (kind,)
-            ).fetchone()
-        return int(row["n"])
 
     # --- helpers ---------------------------------------------------------
 

@@ -72,14 +72,31 @@ function prompt {
 function craw {
     [CmdletBinding()]
     param([Parameter(ValueFromRemainingArguments=$true)]$Args)
-    $r = Get-CrawResponse
-    if (-not $r) {
+    $text = ($Args -join ' ').Trim()
+    $obj = if ($text) { @{ ask = "say"; text = $text } } else { @{ ask = "face" } }
+    $req = $obj | ConvertTo-Json -Compress
+
+    try {
+        $client = New-Object System.IO.Pipes.NamedPipeClientStream(".", "craw", [System.IO.Pipes.PipeDirection]::InOut)
+        $client.Connect(300)
+        try {
+            $writer = New-Object System.IO.StreamWriter($client)
+            $reader = New-Object System.IO.StreamReader($client)
+            $writer.WriteLine($req)
+            $writer.Flush()
+            $line = $reader.ReadLine()
+            $r = $line | ConvertFrom-Json
+        } finally { $client.Dispose() }
+    } catch {
         Write-Host "craw: not running" -ForegroundColor Red
         return
     }
-    Write-Host "craw is $($r.face.mood), $($r.face.age_min)m old." -ForegroundColor $r.face.color
-    if ($r.message.text) {
-        Write-Host "  $($r.message.text)"
+
+    if ($text) {
+        Write-Host $r.message.text -ForegroundColor Cyan
+    } else {
+        Write-Host "craw is $($r.face.mood), $($r.face.age_min)m old." -ForegroundColor $r.face.color
+        if ($r.message.text) { Write-Host "  $($r.message.text)" }
     }
 }
 

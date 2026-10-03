@@ -1,8 +1,7 @@
 """Craw's voice.
 
-Takes an impulse and composes a line. Rules for now; the LLM version
-arrives later and will use this as a fallback and a floor. A creature
-should be able to say something small without thinking hard.
+Composes lines. LLM first, rules as silent fallback. A creature should
+be able to say something small without thinking hard.
 
 Rules of the voice:
   - one line
@@ -16,9 +15,14 @@ from __future__ import annotations
 
 import random
 
+from craw.brain.context import build as build_context
+from craw.brain.llm import LLM
+from craw.brain.memory import Memory
+from craw.brain.persona import system_prompt
 from craw.brain.reflexes import Impulse
+from craw.state import State
 
-# Per-reason phrase pools. Kept small on purpose.
+
 PHRASES: dict[str, list[str]] = {
     "repetition": [
         "{subject}",
@@ -43,13 +47,7 @@ PHRASES: dict[str, list[str]] = {
 
 FALLBACK = ["{subject}"]
 
-
-def compose(impulse: Impulse) -> str:
-    """Turn an impulse into a single spoken line."""
-    pool = PHRASES.get(impulse.reason, FALLBACK)
-    template = random.choice(pool)
-    line = template.format(subject=impulse.subject)
-    return _tidy(line)
+_llm = LLM()
 
 
 def _tidy(line: str) -> str:
@@ -57,3 +55,33 @@ def _tidy(line: str) -> str:
     while line.endswith(("..", "!!", "??")):
         line = line[:-1]
     return line
+
+
+def compose(impulse: Impulse, memory: Memory, state: State) -> str:
+    """Compose a line. LLM first; rules as silent fallback."""
+    if _llm.available():
+        ctx = build_context(memory, state)
+        prompt = (
+            f"You just decided to speak because: {impulse.subject}\n"
+            f"(reason: {impulse.reason}, urgency: {impulse.urgency:.2f})\n\n"
+            f"Write one line, in your voice. Or write 'silence'."
+        )
+        text = _llm.generate(prompt, system=system_prompt(ctx))
+        if text and text.lower().strip(" .") != "silence":
+            return text
+        if text.lower().strip(" .") == "silence":
+            return ""
+    # Fallback: rules, only if the LLM is down.
+    pool = PHRASES.get(impulse.reason, FALLBACK)
+    template = random.choice(pool)
+    return _tidy(template.format(subject=impulse.subject))
+
+
+def answer(question: str, memory: Memory, state: State) -> str:
+    """Answer a direct question from the user."""
+    if not _llm.available():
+        return "my mind is offline right now."
+    ctx = build_context(memory, state)
+    prompt = f"The user asks: {question}\n\nAnswer in your voice. One or two sentences."
+    text = _llm.generate(prompt, system=system_prompt(ctx))
+    return text or "i don't have an answer for that."

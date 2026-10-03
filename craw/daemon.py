@@ -15,13 +15,14 @@ from __future__ import annotations
 
 import signal
 import time
+import threading
 from dataclasses import dataclass, field
 
 from craw import log
 from craw.brain.memory import Memory
 from craw.brain.mouth_state import MouthState
 from craw.brain.reflexes import Reflexes
-from craw.brain.voice import compose
+from craw.brain.voice import answer, compose
 from craw.brain.will import Will
 from craw.mouth.ipc import Mouth
 from craw.mouth.protocol import Message, Response, face_for_mood
@@ -99,7 +100,7 @@ class Daemon:
         for s in self.senses:
             try:
                 obs = s.sense()
-            except Exception as exc:  # a broken sense must not kill the daemon
+            except Exception as exc:
                 log.sense(f"{s.name} errored: {exc!r}")
                 continue
             if not obs:
@@ -107,7 +108,10 @@ class Daemon:
             if any(o.meta.get("mode") == "history" for o in obs):
                 self._just_ingested_history = True
             for o in obs:
-                self.memory.observe(o.text, **o.meta)
+                try:
+                    self.memory.observe(o.text, **o.meta)
+                except Exception as exc:
+                    log.sense(f"observe errored: {exc!r}")
             log.sense(f"{s.name}: {len(obs)} observations")
 
     def _run_reflexes(self) -> None:
@@ -130,7 +134,9 @@ class Daemon:
             )
             # A few become *spoken*.
             if self.will.should_speak(imp):
-                line = compose(imp)
+                line = compose(imp, self.memory, self.state)
+                if not line:
+                    continue
                 self.will.spoke()
                 self.state.speak()
                 log.speak(line)
@@ -149,11 +155,38 @@ class Daemon:
     # --- the mouth --------------------------------------------------------
 
     def _handle_request(self, request: dict) -> Response:
-        """PowerShell asked for Craw's face and any pending message."""
+        ask = request.get("ask", "face")
         self.state.tick()
         face = face_for_mood(self.state.mood, int(self.state.age_seconds / 60))
+
+        if ask == "say":
+            question = request.get("text", "").strip()
+            if question:
+                # Hand off to a background thread so the pipe replies instantly.
+                threading.Thread(
+                    target=self._answer_later,
+                    args=(question,),
+                    daemon=True,
+                ).start()
+                return Response(
+                    face=face,
+                    message=Message(text="thinking...", kind="reply"),
+                )
+
         text, kind = self.mouth_state.take()
         return Response(face=face, message=Message(text=text, kind=kind))
+
+    def _answer_later(self, question: str) -> None:
+        try:
+            log.body(f"asked: {question[:60]}")
+            reply = answer(question, self.memory, self.state)
+            log.body(f"replied: {(reply or '')[:60]}")
+            self.memory.say(question, who="user")
+            self.memory.say(reply, who="craw")
+            self.mouth_state.queue(reply, kind="reply")
+        except Exception as exc:
+            log.body(f"answer errored: {exc!r}")
+
 
     # --- bookends ---------------------------------------------------------
 

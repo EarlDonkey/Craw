@@ -32,6 +32,8 @@ class Reflexes:
         self.state = state
         self._last_scan = 0.0
         self.scan_interval = 60.0  # seconds between scans
+        self._recent_impulses: dict[str, float] = {}  # subject -> last fired at
+        self._dedup_seconds = 1800.0  # don't re-fire the same impulse for 30 min
 
     # --- main -------------------------------------------------------------
 
@@ -45,12 +47,28 @@ class Reflexes:
     # --- individual reflexes ---------------------------------------------
 
     def _all(self) -> list[Impulse]:
-        out: list[Impulse] = []
-        out.extend(self._repetition())
-        out.extend(self._late_night())
-        out.extend(self._silence())
-        out.extend(self._novelty())
-        return out
+        raw: list[Impulse] = []
+        raw.extend(self._repetition())
+        raw.extend(self._late_night())
+        raw.extend(self._silence())
+        raw.extend(self._novelty())
+
+        now = time.time()
+        fresh: list[Impulse] = []
+        for imp in raw:
+            last = self._recent_impulses.get(imp.subject, 0.0)
+            if now - last < self._dedup_seconds:
+                continue
+            self._recent_impulses[imp.subject] = now
+            fresh.append(imp)
+
+        # prune old entries so the dict doesn't grow forever
+        self._recent_impulses = {
+            k: v for k, v in self._recent_impulses.items()
+            if now - v < self._dedup_seconds
+        }
+        return fresh
+
 
     def _repetition(self) -> list[Impulse]:
         """Same command many times in the last hour — live only."""
@@ -70,7 +88,7 @@ class Reflexes:
                     Impulse(
                         reason="repetition",
                         subject=f"you ran `{cmd}` {len(entries)} times in the last hour",
-                        evidence=entries[-5:],
+                    evidence=entries[-5:],
                     urgency=min(1.0, len(entries) / 12),
                     )
                 )

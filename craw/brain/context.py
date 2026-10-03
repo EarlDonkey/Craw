@@ -1,0 +1,47 @@
+"""What Craw knows right now, in a few hundred words.
+
+Built fresh every time Craw is about to speak. Reads recent memory,
+current mood, and the last exchange, and produces a compact context
+block. The LLM sees this, not the database.
+"""
+
+from __future__ import annotations
+
+import time
+
+from craw.brain.memory import Memory
+from craw.state import State
+
+
+def build(memory: Memory, state: State, *, recent_limit: int = 15) -> str:
+    lines: list[str] = []
+
+    lines.append(f"You are {state.age_seconds / 60:.0f} minutes old.")
+    lines.append(f"Hunger: {state.hunger:.2f} (0 full, 1 starving).")
+    lines.append(f"Energy: {state.energy:.2f}.")
+    lines.append(f"Mood: {state.mood}.")
+    hour = time.localtime().tm_hour
+    lines.append(f"Local time: {hour:02d}:00.")
+    lines.append("")
+
+    recent_obs = memory.recent("observation", limit=recent_limit)
+    if recent_obs:
+        lines.append("Things you recently noticed:")
+        for e in recent_obs:
+            lines.append(f"  - {e.text}")
+        lines.append("")
+
+    recent_convo = memory.recent("conversation", limit=6)
+    if recent_convo:
+        lines.append("Recent exchanges:")
+        for e in recent_convo:
+            lines.append(f"  - {e.text}")
+        lines.append("")
+
+    recent_thoughts = memory.recent("thought", limit=5)
+    if recent_thoughts:
+        lines.append("Things you were thinking about:")
+        for e in recent_thoughts:
+            lines.append(f"  - {e.text}")
+
+    return "\n".join(lines)
