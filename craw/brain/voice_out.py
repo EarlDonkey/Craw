@@ -81,6 +81,12 @@ class Speaker:
         if proc.returncode != 0 or not tmp.exists():
             return None
         return tmp
+    
+    def mute(self) -> None:
+        self.enabled = False
+
+    def unmute(self) -> None:
+        self.enabled = True
 
     @staticmethod
     @staticmethod

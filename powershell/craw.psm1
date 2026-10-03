@@ -100,4 +100,20 @@ function craw {
     }
 }
 
-Export-ModuleMember -Function prompt, craw, Get-CrawResponse, Get-CrawPrompt
+function craw-mute {
+    [CmdletBinding()]
+    param()
+    $r = Get-CrawResponse -Request @{ ask = "mute" }
+    if ($r) { Write-Host "craw is quiet." -ForegroundColor DarkGray }
+    else { Write-Host "craw: not running" -ForegroundColor Red }
+}
+
+function craw-unmute {
+    [CmdletBinding()]
+    param()
+    $r = Get-CrawResponse -Request @{ ask = "unmute" }
+    if ($r) { Write-Host "craw can speak." -ForegroundColor Green }
+    else { Write-Host "craw: not running" -ForegroundColor Red }
+}
+
+Export-ModuleMember -Function prompt, craw, craw-mute, craw-unmute, Get-CrawResponse, Get-CrawPrompt

@@ -175,6 +175,16 @@ class Daemon:
                     face=face,
                     message=Message(text="thinking...", kind="reply"),
                 )
+                
+        if ask == "mute":
+            self.speaker.mute()
+            log.body("voice muted")
+            return Response(face=face, message=Message(text="voice muted.", kind="reply"))
+
+        if ask == "unmute":
+            self.speaker.unmute()
+            log.body("voice unmuted")
+            return Response(face=face, message=Message(text="voice back.", kind="reply"))
 
         text, kind = self.mouth_state.take()
         return Response(face=face, message=Message(text=text, kind=kind))
