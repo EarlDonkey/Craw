@@ -7,7 +7,7 @@ Three tiers:
             Craw does it, then tells you what it did.
   deny    — not allowed. Never happens.
 
-The registry is a whitelist. Anything not in it is deny, unless told to do otherwise.
+The registry is a whitelist. Anything not in it is deny.
 """
 
 from __future__ import annotations

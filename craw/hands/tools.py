@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 import time
 import webbrowser
 from pathlib import Path
@@ -20,12 +19,9 @@ from typing import Any
 from craw.hands.registry import REGISTRY, Tool
 
 
-# ---- safe defaults -------------------------------------------------------
-
 HOME = Path(os.environ.get("USERPROFILE", Path.home()))
 SCREENSHOT_DIR = HOME / "Downloads" / "Craw" / ".craw" / "screenshots"
 
-# Apps Craw is allowed to launch. Not a general "run anything."
 ALLOWED_APPS: dict[str, str] = {
     "notepad":      "notepad.exe",
     "calculator":   "calc.exe",
@@ -46,17 +42,14 @@ ALLOWED_APPS: dict[str, str] = {
 # ---- auto tier -----------------------------------------------------------
 
 def tell_time() -> str:
-    """Current local time."""
     return time.strftime("%H:%M")
 
 
 def tell_date() -> str:
-    """Today's date."""
     return time.strftime("%A, %B %d, %Y")
 
 
 def list_dir(path: str = "") -> str:
-    """List the contents of a folder. Defaults to the user's home."""
     target = Path(path).expanduser() if path else HOME
     if not target.exists():
         return f"no such folder: {target}"
@@ -71,7 +64,6 @@ def list_dir(path: str = "") -> str:
 
 
 def search_files(query: str, folder: str = "") -> str:
-    """Search for files by name substring. Case-insensitive."""
     root = Path(folder).expanduser() if folder else HOME
     if not root.exists():
         return f"no such folder: {root}"
@@ -88,7 +80,6 @@ def search_files(query: str, folder: str = "") -> str:
 
 
 def read_file(path: str, max_bytes: int = 2000) -> str:
-    """Read a text file, capped. Returns up to max_bytes characters."""
     p = Path(path).expanduser()
     if not p.exists():
         return f"no such file: {p}"
@@ -104,7 +95,6 @@ def read_file(path: str, max_bytes: int = 2000) -> str:
 
 
 def read_clipboard() -> str:
-    """Read the current clipboard contents (text only)."""
     try:
         import tkinter as tk
         root = tk.Tk()
@@ -117,7 +107,6 @@ def read_clipboard() -> str:
 
 
 def system_stats() -> str:
-    """CPU, memory, and disk usage."""
     try:
         import psutil
     except ImportError:
@@ -133,7 +122,6 @@ def system_stats() -> str:
 
 
 def active_window() -> str:
-    """Title of the currently focused window."""
     try:
         import win32gui
     except ImportError:
@@ -146,7 +134,6 @@ def active_window() -> str:
 
 
 def list_processes() -> str:
-    """Names of the top 20 processes by memory usage."""
     try:
         import psutil
     except ImportError:
@@ -165,7 +152,6 @@ def list_processes() -> str:
 # ---- confirm tier --------------------------------------------------------
 
 def open_app(name: str) -> str:
-    """Open a whitelisted application by name."""
     key = name.lower().strip()
     target = ALLOWED_APPS.get(key)
     if not target:
@@ -180,7 +166,6 @@ def open_app(name: str) -> str:
 
 
 def open_path(path: str) -> str:
-    """Open a file or folder in the default app."""
     p = Path(path).expanduser()
     if not p.exists():
         return f"no such path: {p}"
@@ -192,7 +177,6 @@ def open_path(path: str) -> str:
 
 
 def open_url(url: str) -> str:
-    """Open a URL in the default browser."""
     if not (url.startswith("http://") or url.startswith("https://")):
         url = "https://" + url
     try:
@@ -203,7 +187,6 @@ def open_url(url: str) -> str:
 
 
 def play_pause() -> str:
-    """Toggle media play/pause."""
     try:
         import ctypes
         ctypes.windll.user32.keybd_event(0xB3, 0, 0, 0)
@@ -237,7 +220,6 @@ def _volume_key(vk: int, msg: str) -> str:
 
 
 def take_screenshot() -> str:
-    """Capture the screen and save it to Craw's home."""
     try:
         from PIL import ImageGrab
     except ImportError:
@@ -253,11 +235,9 @@ def take_screenshot() -> str:
 
 
 def notify(title: str, body: str = "") -> str:
-    """Show a Windows toast notification."""
     try:
         from win10toast import ToastNotifier
     except ImportError:
-        # Fallback: use PowerShell's native toast
         try:
             ps = (
                 f'[reflection.assembly]::loadwithpartialname("System.Windows.Forms") | Out-Null;'
@@ -275,8 +255,6 @@ def notify(title: str, body: str = "") -> str:
 
 
 def remember(text: str) -> str:
-    """Save a note into Craw's long-term memory. (Wired by the daemon.)"""
-    # The daemon overrides this; here it's a stub so the registry is complete.
     return f"remembered: {text}"
 
 

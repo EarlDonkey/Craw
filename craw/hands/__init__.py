@@ -3,7 +3,7 @@
 Tools are what Craw can *do*. The registry holds them. The router runs
 them. Policy decides which ones are allowed.
 
-Import this module to populate the registry.
+Importing this module populates the registry.
 """
 
 from craw.hands.registry import REGISTRY, Registry, Tool

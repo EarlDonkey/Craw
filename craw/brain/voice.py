@@ -78,10 +78,40 @@ def compose(impulse: Impulse, memory: Memory, state: State) -> str:
 
 
 def answer(question: str, memory: Memory, state: State) -> str:
-    """Answer a direct question from the user."""
+    """Answer a direct question. May call a tool once."""
     if not _llm.available():
         return "my mind is offline right now."
+
+    from craw.brain.tool_call import parse_tool_call, execute
+    from craw.hands import REGISTRY
+
     ctx = build_context(memory, state)
-    prompt = f"The user asks: {question}\n\nAnswer in your voice. One or two sentences."
-    text = _llm.generate(prompt, system=system_prompt(ctx))
-    return text or "i don't have an answer for that."
+    tools_block = REGISTRY.prompt_block()
+
+    prompt = (
+        f"The user says: {question}\n\n"
+        f"Respond in one of two ways:\n"
+        f"  1. If a tool matches the request, output ONLY a JSON object:\n"
+        f'     {{"tool": "<name>", "args": {{...}}}}\n'
+        f"  2. Otherwise, answer in one short sentence, in your voice.\n\n"
+        f"Do not describe what you would do. Either call the tool or answer."
+    )
+    text = _llm.generate_with_tools(prompt, system=system_prompt(ctx), tools_block=tools_block)
+
+    call = parse_tool_call(text)
+    if call is None:
+        return text or "i don't have an answer for that."
+
+    ok, result = execute(call)
+    if ok:
+        followup = (
+            f"You used {call.name}. It returned:\n{result}\n\n"
+            f"Tell the user, in one line, in your voice."
+        )
+    else:
+        followup = (
+            f"You tried {call.name} but it failed: {result}\n\n"
+            f"Tell the user, in one line."
+        )
+    final = _llm.generate(followup, system=system_prompt(ctx))
+    return final or result

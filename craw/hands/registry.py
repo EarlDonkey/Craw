@@ -9,7 +9,6 @@ Nothing in this file *does* anything. It only describes.
 
 from __future__ import annotations
 
-import inspect
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
@@ -25,13 +24,12 @@ class Tool:
     description: str
     fn: Callable[..., Any]
     tier: Tier = "auto"
-    args: dict[str, str] = field(default_factory=dict)   # arg name -> "type: description"
+    args: dict[str, str] = field(default_factory=dict)
 
     def call(self, **kwargs: Any) -> Any:
         return self.fn(**kwargs)
 
     def schema_line(self) -> str:
-        """One line for the LLM prompt."""
         if not self.args:
             return f"  - {self.name}: {self.description}"
         args = ", ".join(f"{k}" for k in self.args)
@@ -62,11 +60,6 @@ class Registry:
         return list(self._tools.keys())
 
     def prompt_block(self) -> str:
-        """The tools list, formatted for the LLM's system prompt.
-
-        Grouped by tier so the model can see what's safe and what needs
-        confirmation.
-        """
         auto = [t for t in self._tools.values() if t.tier == "auto"]
         confirm = [t for t in self._tools.values() if t.tier == "confirm"]
 
@@ -81,5 +74,4 @@ class Registry:
         return "\n".join(lines)
 
 
-# One global registry. Tools register themselves when imported.
 REGISTRY = Registry()
