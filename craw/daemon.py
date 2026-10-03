@@ -30,7 +30,7 @@ TICK_INTERVAL = 2.0
 SENSE_INTERVAL = 30.0
 REFLEX_INTERVAL = 60.0
 BREATHE_INTERVAL = 300.0
-MOOD_SAMPLE_INTERVAL = 300.0   # one row in mood.db every 5 minutes
+MOOD_SAMPLE_INTERVAL = 300.0
 
 
 @dataclass
@@ -169,11 +169,10 @@ class Daemon:
                 self.speaker.say(line)
 
     def _maybe_milestone(self, imp) -> None:
-        """Record a first, if this impulse is a first."""
         if imp.reason == "late_night":
             self.milestones.record(
                 "first_late_night",
-                f"the first time you were still working after midnight",
+                "the first time you were still working after midnight",
             )
         if imp.reason == "repetition" and imp.urgency >= 0.95:
             self.milestones.record(
@@ -248,6 +247,20 @@ class Daemon:
             log.body("mic unmuted")
             return Response(face=face, message=Message(text="i'm listening.", kind="reply"))
 
+        if ask == "shell_log":
+            from craw.hands.shell_log import tail
+            n = int(request.get("n", 20))
+            lines = tail(n)
+            if not lines:
+                return Response(
+                    face=face,
+                    message=Message(text="(no shell history yet)", kind="reply"),
+                )
+            return Response(
+                face=face,
+                message=Message(text="\n".join(lines), kind="reply"),
+            )
+
         text, kind = self.mouth_state.take()
         return Response(face=face, message=Message(text=text, kind=kind))
 
@@ -270,25 +283,21 @@ class Daemon:
 
     def _greet(self) -> None:
         self.state.see()
-        self.milestones.record("first_spoke", "the first time we spoke") if self.memory.count() == 0 else None
 
-        # First breath: no memories.
         if self.memory.count() == 0:
+            self.milestones.record("first_spoke", "the first time we spoke")
             log.body("first breath.")
             return
 
-        # Generate a greeting with the LLM, informed by trend + milestones.
         self._greet_generated()
 
     def _greet_generated(self) -> None:
-        """Ask the LLM to write the morning line."""
         from craw.brain.context import build as build_context
         from craw.brain.persona import system_prompt
         from craw.brain.llm import LLM
 
         llm = LLM()
         if not llm.available():
-            # Fallback greeting if no LLM
             if self.state.host_name:
                 log.body(f"woke. hello, {self.state.host_name}.")
             else:
@@ -300,10 +309,10 @@ class Daemon:
             milestones=self.milestones, mood_log=self.mood_log,
         )
         prompt = (
-            f"You just woke up. Write ONE line to greet the person — "
-            f"a creature coming back into the room. Mention something you "
-            f"noticed while you were quiet, or something from your milestones. "
-            f"If there is nothing worth saying, return the single word: silence."
+            "You just woke up. Write ONE line to greet the person — a creature "
+            "coming back into the room. Mention something you noticed while you "
+            "were quiet, or something from your milestones. If there is nothing "
+            "worth saying, return the single word: silence."
         )
         text = llm.generate(prompt, system=system_prompt(ctx))
         if text and text.lower().strip(" .") != "silence":

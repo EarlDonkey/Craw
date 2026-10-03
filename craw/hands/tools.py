@@ -258,9 +258,40 @@ def remember(text: str) -> str:
     return f"remembered: {text}"
 
 
+# ---- run_shell (policy-gated) --------------------------------------------
+
+_POLICY = None
+
+
+def _policy():
+    global _POLICY
+    if _POLICY is None:
+        from craw.hands.shell_policy import ShellPolicy
+        _POLICY = ShellPolicy.load()
+    return _POLICY
+
+
+def run_shell(command: str) -> str:
+    """Run a shell command, subject to Craw's policy."""
+    from craw.hands.shell_runner import run as run_cmd
+
+    policy = _policy()
+    decision = policy.evaluate(command)
+    if not decision.allowed:
+        return f"i can't run that. {decision.reason}."
+
+    result = run_cmd(command, policy)
+    if result.ok:
+        return result.output
+    return f"exit {result.exit_code}\n{result.output}"
+
+
 # ---- registration --------------------------------------------------------
 
 def _register_all() -> None:
+    if REGISTRY.names():          # guard: already populated
+        return
+
     REGISTRY.register(Tool("tell_time", "what time is it", tell_time, tier="auto"))
     REGISTRY.register(Tool("tell_date", "what day is it", tell_date, tier="auto"))
     REGISTRY.register(Tool("list_dir", "list files in a folder", list_dir, tier="auto",
@@ -289,6 +320,8 @@ def _register_all() -> None:
                            args={"title": "string", "body": "string"}))
     REGISTRY.register(Tool("remember", "save a note into memory", remember, tier="confirm",
                            args={"text": "string"}))
+    REGISTRY.register(Tool("run_shell", "run a shell command (whitelisted)", run_shell, tier="confirm",
+                           args={"command": "string, the full command to run"}))
 
 
 _register_all()
