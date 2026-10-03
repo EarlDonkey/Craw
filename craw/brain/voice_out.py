@@ -90,11 +90,20 @@ class Speaker:
 
     @staticmethod
     @staticmethod
+    @staticmethod
     def _play(wav: Path) -> None:
-        """Play the WAV directly through the audio device. No player window."""
+        """Play through Windows native audio — doesn't touch PortAudio,
+        so it can't interfere with the mic stream."""
         try:
-            data, samplerate = sf.read(str(wav), dtype="float32")
-            sd.play(data, samplerate)
-            sd.wait()
+            import winsound
+            winsound.PlaySound(str(wav), winsound.SND_FILENAME)
         except Exception:
-            pass
+            # Fallback to sounddevice if winsound fails
+            try:
+                import sounddevice as sd
+                import soundfile as sf
+                data, samplerate = sf.read(str(wav), dtype="float32")
+                sd.play(data, samplerate)
+                sd.wait()
+            except Exception:
+                pass
