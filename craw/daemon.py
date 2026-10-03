@@ -15,15 +15,16 @@ from __future__ import annotations
 
 import signal
 import time
-from dataclasses import dataclass
-
-from pyparsing import line
-
-from craw.brain import Will, compose
+from dataclasses import dataclass, field
 
 from craw import log
 from craw.brain.memory import Memory
+from craw.brain.mouth_state import MouthState
 from craw.brain.reflexes import Reflexes
+from craw.brain.voice import compose
+from craw.brain.will import Will
+from craw.mouth.ipc import Mouth
+from craw.mouth.protocol import Message, Response, face_for_mood
 from craw.senses.base import Sense
 from craw.senses.shell import ShellSense
 from craw.state import State
@@ -41,6 +42,7 @@ class Daemon:
     memory: Memory
     senses: list[Sense]
     reflexes: Reflexes
+    mouth_state: MouthState = field(default_factory=MouthState)
 
     def __post_init__(self) -> None:
         self._running = False
@@ -49,11 +51,13 @@ class Daemon:
         self._last_breathe = 0.0
         self._just_ingested_history = False
         self.will = Will.load()
+        self.mouth = Mouth(self._handle_request)
 
     # --- lifecycle --------------------------------------------------------
 
     def run(self) -> None:
         self._install_signals()
+        self.mouth.start()
         self._running = True
         self._greet()
         while self._running:
@@ -95,7 +99,7 @@ class Daemon:
         for s in self.senses:
             try:
                 obs = s.sense()
-            except Exception as exc:
+            except Exception as exc:  # a broken sense must not kill the daemon
                 log.sense(f"{s.name} errored: {exc!r}")
                 continue
             if not obs:
@@ -107,7 +111,9 @@ class Daemon:
             log.sense(f"{s.name}: {len(obs)} observations")
 
     def _run_reflexes(self) -> None:
-        if self.memory.count("Obeservation") > 0 and self._just_ingested_history:
+        # Don't react to retrospective history. First run is for learning,
+        # not for talking. Live mode only.
+        if self._just_ingested_history:
             self._just_ingested_history = False
             return
         impulses = self.reflexes.scan()
@@ -115,18 +121,20 @@ class Daemon:
             return
         for imp in impulses:
             log.reflex(f"[{imp.reason}] {imp.subject}  (urgency {imp.urgency:.2f})")
-            # For now, every impulse becomes a *thought*. The mouth arrives later.
+            # Every impulse becomes a *thought*.
             self.memory.think(
                 imp.subject,
                 reason=imp.reason,
                 urgency=imp.urgency,
                 evidence=[e.id for e in imp.evidence],
             )
-        if self.will.should_speak(imp):
-            line = compose(imp)
-            self.will.spoke()
-            self.state.speak()
-            log.speak(line)
+            # A few become *spoken*.
+            if self.will.should_speak(imp):
+                line = compose(imp)
+                self.will.spoke()
+                self.state.speak()
+                log.speak(line)
+                self.mouth_state.queue(line, kind="thought")
 
     def _breathe(self) -> None:
         self.state.save()
@@ -137,6 +145,15 @@ class Daemon:
             f"mood {self.state.mood}  "
             f"mem {self.memory.count()}"
         )
+
+    # --- the mouth --------------------------------------------------------
+
+    def _handle_request(self, request: dict) -> Response:
+        """PowerShell asked for Craw's face and any pending message."""
+        self.state.tick()
+        face = face_for_mood(self.state.mood, int(self.state.age_seconds / 60))
+        text, kind = self.mouth_state.take()
+        return Response(face=face, message=Message(text=text, kind=kind))
 
     # --- bookends ---------------------------------------------------------
 
@@ -149,5 +166,6 @@ class Daemon:
             log.body(f"woke. age {age_min:.0f}m. {self.memory.count()} memories.")
 
     def _farewell(self) -> None:
+        self.mouth.stop()
         self.state.save()
         log.body("going quiet.")
