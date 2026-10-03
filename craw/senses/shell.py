@@ -9,6 +9,7 @@ Everything is observed. Filtering is the brain's job, not the sense's.
 
 from __future__ import annotations
 
+from email.mime import text
 import os
 import time
 import json
@@ -33,8 +34,11 @@ def _history_path() -> Path:
 # Commands that are noise. Not filtered from memory — filtered from *pattern*
 # detection, because "he ran ls" is not interesting, but "he ran ls 40 times
 # in a row" is. We keep the raw commands; we just don't count these as events.
-_NOISE = {"", "ls", "dir", "cd", "pwd", "clear", "cls", "exit"}
-
+_NOISE = {
+    "", "ls", "dir", "cd", "pwd", "clear", "cls", "exit", "quit",
+    "history", "echo", "whoami", "hostname", "cd ..", "cd .",
+    "Get-Location", "Get-ChildItem", "Set-Location",
+}
 
 @dataclass
 class Command:
@@ -97,6 +101,17 @@ class ShellSense:
 
     # --- observing --------------------------------------------------------
     
+    
+    @staticmethod
+    def _is_boring(text: str) -> bool:
+        t = text.strip().lower()
+        if not t:
+            return True
+        if t.startswith(">>") or t.startswith("+"):   # PS continuation / error lines
+            return True
+        if t in _NOISE:
+            return True
+        return False
 
     def _observe_batch(self, commands: list[Command], *, retrospective: bool) -> list[Observation]:
         """Turn a batch of commands into observations.
@@ -128,7 +143,7 @@ class ShellSense:
             return out  # don't do pattern detection on retrospective history
         
         # 2. Repetition — same command 3+ times within the batch.
-        counts = Counter(c.text for c in commands if c.text not in _NOISE)
+        counts = Counter(c.text for c in commands if not self._is_boring(c.text))
         for cmd, n in counts.most_common():
             if n >= 3:
                 out.append(
