@@ -1,8 +1,8 @@
 """What Craw knows right now, in a few hundred words.
 
 Built fresh every time Craw is about to speak. Reads recent memory,
-current mood, and the last exchange, and produces a compact context
-block. The LLM sees this, not the database.
+current mood, mood trend, milestones, and the last exchange, and
+produces a compact context block. The LLM sees this, not the database.
 """
 
 from __future__ import annotations
@@ -10,10 +10,19 @@ from __future__ import annotations
 import time
 
 from craw.brain.memory import Memory
+from craw.brain.milestones import Milestones
+from craw.brain.mood_log import MoodLog
 from craw.state import State
 
 
-def build(memory: Memory, state: State, *, recent_limit: int = 15) -> str:
+def build(
+    memory: Memory,
+    state: State,
+    *,
+    recent_limit: int = 15,
+    milestones: Milestones | None = None,
+    mood_log: MoodLog | None = None,
+) -> str:
     lines: list[str] = []
 
     lines.append(f"You are {state.age_seconds / 60:.0f} minutes old.")
@@ -28,12 +37,25 @@ def build(memory: Memory, state: State, *, recent_limit: int = 15) -> str:
     else:
         lines.append("You do not yet know the person's name.")
 
+    if mood_log is not None:
+        trend = mood_log.trend(3600)
+        if trend:
+            lines.append(trend)
+
     lines.append("")
+
+    if milestones is not None:
+        ms = milestones.summary(limit=6)
+        if ms:
+            lines.append(ms)
+            lines.append("")
 
     recent_obs = memory.recent("observation", limit=recent_limit)
     if recent_obs:
         lines.append("Things you recently noticed:")
         for e in recent_obs:
+            if e.meta.get("milestone"):
+                continue  # already in the milestones block
             lines.append(f"  - {e.text}")
         lines.append("")
 

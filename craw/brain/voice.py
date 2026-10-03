@@ -57,10 +57,16 @@ def _tidy(line: str) -> str:
     return line
 
 
-def compose(impulse: Impulse, memory: Memory, state: State) -> str:
+def compose(
+    impulse: Impulse,
+    memory: Memory,
+    state: State,
+    milestones=None,
+    mood_log=None,
+) -> str:
     """Compose a line. LLM first; rules as silent fallback."""
     if _llm.available():
-        ctx = build_context(memory, state)
+        ctx = build_context(memory, state, milestones=milestones, mood_log=mood_log)
         prompt = (
             f"You just decided to speak because: {impulse.subject}\n"
             f"(reason: {impulse.reason}, urgency: {impulse.urgency:.2f})\n\n"
@@ -71,13 +77,18 @@ def compose(impulse: Impulse, memory: Memory, state: State) -> str:
             return text
         if text.lower().strip(" .") == "silence":
             return ""
-    # Fallback: rules, only if the LLM is down.
     pool = PHRASES.get(impulse.reason, FALLBACK)
     template = random.choice(pool)
     return _tidy(template.format(subject=impulse.subject))
 
 
-def answer(question: str, memory: Memory, state: State) -> str:
+def answer(
+    question: str,
+    memory: Memory,
+    state: State,
+    milestones=None,
+    mood_log=None,
+) -> str:
     """Answer a direct question. May call a tool once."""
     if not _llm.available():
         return "my mind is offline right now."
@@ -85,7 +96,7 @@ def answer(question: str, memory: Memory, state: State) -> str:
     from craw.brain.tool_call import parse_tool_call, execute
     from craw.hands import REGISTRY
 
-    ctx = build_context(memory, state)
+    ctx = build_context(memory, state, milestones=milestones, mood_log=mood_log)
     tools_block = REGISTRY.prompt_block()
 
     prompt = (
