@@ -323,7 +323,7 @@ class Daemon:
             log.body(f"replied: {(reply or '')[:60]}")
             self.memory.say(question, who="user")
             self.memory.say(reply, who="craw")
-            self.mouth_state.clear()
+            self.mouth_state.clear()          # ← must be here
             self.mouth_state.queue(reply, kind="reply")
             self.speaker.say(reply)
         except Exception as exc:
@@ -368,7 +368,6 @@ class Daemon:
         if text and text.lower().strip(" .") != "silence":
             log.body(f"woke. {text}")
             self.mouth_state.queue(text, kind="thought")
-            self.speaker.say(text)
             self.state.speak()
         else:
             log.body("woke. quiet.")

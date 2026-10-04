@@ -19,7 +19,7 @@ from typing import Callable
 
 import numpy as np
 
-WAKE_WORD = "hey_jarvis"
+WAKE_WORD = "hey_craw"
 SAMPLE_RATE = 16000
 CHUNK_MS = 80
 CHUNK_SAMPLES = int(SAMPLE_RATE * CHUNK_MS / 1000)   # 1280

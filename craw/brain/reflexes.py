@@ -68,8 +68,14 @@ class Reflexes:
 
     # --- individual reflexes ---------------------------------------------
 
+    # Commands whose repetition isn't interesting. Reflexes skip them.
+    _BORING_COMMANDS = {
+        "clear", "cls", "exit", "quit", "cd", "cd ..", "ls", "dir",
+        "pwd", "history", "echo", "whoami", "hostname",
+    }
+
     def _repetition(self) -> list[Impulse]:
-        """Same command many times in the last hour — live only."""
+        """Same command many times in the last hour — live, non-boring only."""
         recent = self.memory.since("observation", 3600)
         counts: dict[str, list[Entry]] = {}
         for e in recent:
@@ -77,6 +83,12 @@ class Reflexes:
                 continue
             cmd = e.meta.get("command")
             if not cmd:
+                continue
+            # Skip boring shell noise
+            first = cmd.strip().split()[0].lower() if cmd.strip() else ""
+            if cmd.strip().lower() in self._BORING_COMMANDS:
+                continue
+            if first in self._BORING_COMMANDS:
                 continue
             counts.setdefault(cmd, []).append(e)
         out = []
@@ -123,10 +135,17 @@ class Reflexes:
 
     def _novelty(self) -> list[Impulse]:
         recent = self.memory.since("observation", 600)
-        novel = [
-            e for e in recent
-            if e.meta.get("mode") == "live" or "tried something new" in e.text
-        ]
+        novel = []
+        for e in recent:
+            if e.meta.get("mode") != "live" and "tried something new" not in e.text:
+                continue
+            cmd = e.meta.get("command", "")
+            first = cmd.strip().split()[0].lower() if cmd.strip() else ""
+            if cmd.strip().lower() in self._BORING_COMMANDS:
+                continue
+            if first in self._BORING_COMMANDS:
+                continue
+            novel.append(e)
         if not novel:
             return []
         return [
