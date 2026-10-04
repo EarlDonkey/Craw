@@ -18,10 +18,10 @@ from craw.state import State
 class Impulse:
     """Something Craw might think about. Not a thought yet — a candidate."""
 
-    reason: str          # short tag: "repetition", "silence", "late_night", ...
-    subject: str         # what it's about, human readable
-    evidence: list[Entry]  # memory entries that triggered it
-    urgency: float       # 0..1 — how much Craw wants to speak
+    reason: str
+    subject: str
+    evidence: list[Entry]
+    urgency: float
 
 
 class Reflexes:
@@ -31,9 +31,9 @@ class Reflexes:
         self.memory = memory
         self.state = state
         self._last_scan = 0.0
-        self.scan_interval = 60.0  # seconds between scans
-        self._recent_impulses: dict[str, float] = {}  # subject -> last fired at
-        self._dedup_seconds = 1800.0  # don't re-fire the same impulse for 30 min
+        self.scan_interval = 60.0
+        self._recent_impulses: dict[str, float] = {}
+        self._dedup_seconds = 1800.0
 
     # --- main -------------------------------------------------------------
 
@@ -43,8 +43,6 @@ class Reflexes:
             return []
         self._last_scan = now
         return self._all()
-
-    # --- individual reflexes ---------------------------------------------
 
     def _all(self) -> list[Impulse]:
         raw: list[Impulse] = []
@@ -62,13 +60,13 @@ class Reflexes:
             self._recent_impulses[imp.subject] = now
             fresh.append(imp)
 
-        # prune old entries so the dict doesn't grow forever
         self._recent_impulses = {
             k: v for k, v in self._recent_impulses.items()
             if now - v < self._dedup_seconds
         }
         return fresh
 
+    # --- individual reflexes ---------------------------------------------
 
     def _repetition(self) -> list[Impulse]:
         """Same command many times in the last hour — live only."""
@@ -76,7 +74,7 @@ class Reflexes:
         counts: dict[str, list[Entry]] = {}
         for e in recent:
             if e.meta.get("mode") != "live":
-                continue  # retrospective history is context, not a trigger
+                continue
             cmd = e.meta.get("command")
             if not cmd:
                 continue
@@ -88,14 +86,13 @@ class Reflexes:
                     Impulse(
                         reason="repetition",
                         subject=f"you ran `{cmd}` {len(entries)} times in the last hour",
-                    evidence=entries[-5:],
-                    urgency=min(1.0, len(entries) / 12),
+                        evidence=entries[-5:],
+                        urgency=min(1.0, len(entries) / 12),
                     )
                 )
         return out
 
     def _late_night(self) -> list[Impulse]:
-        """It's late and Craw has seen you recently."""
         hour = time.localtime().tm_hour
         if not (0 <= hour < 5):
             return []
@@ -112,7 +109,6 @@ class Reflexes:
         ]
 
     def _silence(self) -> list[Impulse]:
-        """Long silence followed by activity, or just long silence."""
         silence = self.state.silence_seconds
         if silence < 3 * 3600:
             return []
@@ -126,9 +122,11 @@ class Reflexes:
         ]
 
     def _novelty(self) -> list[Impulse]:
-        """A command Craw has never seen before."""
         recent = self.memory.since("observation", 600)
-        novel = [e for e in recent if e.meta.get("mode") == "live" or "tried something new" in e.text]
+        novel = [
+            e for e in recent
+            if e.meta.get("mode") == "live" or "tried something new" in e.text
+        ]
         if not novel:
             return []
         return [

@@ -16,6 +16,7 @@ dev = ["pytest>=8.0", "ruff>=0.4"]
 
 [project.scripts]
 craw = "craw.__main__:main"
+craw-install = "craw.service_cli:main"
 
 [build-system]
 requires = ["hatchling"]

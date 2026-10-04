@@ -1,7 +1,15 @@
-﻿"""Entry point. `python -m craw` starts the daemon."""
+﻿"""Entry point. `python -m craw` starts the daemon.
+
+If launched without a visible console (startup shortcut, hidden window),
+stdout/stderr are redirected to .craw/daemon.log so the daemon is
+inspectable later.
+
+Refuses to start if another live daemon already holds the PID lock.
+"""
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -27,6 +35,7 @@ def main() -> int:
     _redirect_logs_if_headless()
 
     from craw.brain.pidlock import acquire, release
+    from craw import eventlog
 
     ok, owner = acquire()
     if not ok:
@@ -41,6 +50,8 @@ def main() -> int:
         from craw.state import State
 
         state = State.load()
+        eventlog.start(pid=os.getpid(), host=state.host_name or "")
+
         memory = get_memory()
         senses = [ShellSense()]
         reflexes = Reflexes(memory, state)
@@ -49,6 +60,12 @@ def main() -> int:
             daemon.run()
         finally:
             memory.close()
+            eventlog.stop("clean shutdown")
+    except BaseException as exc:
+        try:
+            eventlog.crashed(exc)
+        finally:
+            raise
     finally:
         release()
 

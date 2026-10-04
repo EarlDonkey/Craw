@@ -19,11 +19,10 @@ function Start-CrawDaemon {
         }
     }
 
-    Start-Process -FilePath "py" `
-        -ArgumentList "-m","craw" `
-        -WorkingDirectory $root `
-        -WindowStyle Hidden
-    Start-Sleep -Milliseconds 2000
+    Start-Process -FilePath "C:\Users\user\AppData\Local\Python\pythoncore-3.14-64\pythonw.exe" `
+    -ArgumentList "-m","craw" `
+    -WorkingDirectory $root `
+    -WindowStyle Hidden
 }
 
 function Get-CrawResponse {

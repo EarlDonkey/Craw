@@ -14,6 +14,7 @@ import os
 import subprocess
 import tempfile
 import threading
+import uuid
 from pathlib import Path
 
 
@@ -56,12 +57,29 @@ class Speaker:
                 pass
 
     def _render(self, text: str) -> Path | None:
-        tmp = Path(tempfile.gettempdir()) / f"craw_voice_{os.getpid()}.wav"
+        """Pipe text through piper.exe and return the WAV path.
+
+        Uses startupinfo + CREATE_NO_WINDOW so Windows does NOT flash a
+        console window for the piper subprocess.
+        """
+        tmp = (
+            Path(tempfile.gettempdir())
+            / f"craw_voice_{os.getpid()}_{uuid.uuid4().hex[:8]}.wav"
+        )
         cmd = [
             str(self.piper_dir / "piper.exe"),
             "--model", str(self.piper_dir / self.model),
             "--output_file", str(tmp),
         ]
+
+        startupinfo = None
+        creationflags = 0
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
         try:
             proc = subprocess.run(
                 cmd,
@@ -69,6 +87,8 @@ class Speaker:
                 capture_output=True,
                 timeout=15,
                 cwd=str(self.piper_dir),
+                startupinfo=startupinfo,
+                creationflags=creationflags,
             )
         except (subprocess.TimeoutExpired, OSError):
             return None
