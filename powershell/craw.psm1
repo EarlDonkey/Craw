@@ -5,6 +5,20 @@ $script:CrawFallback = "•"
 
 function Start-CrawDaemon {
     $root = "C:\Users\user\Downloads\Craw"
+    $pidPath = Join-Path $root ".craw\daemon.pid"
+
+    if (Test-Path $pidPath) {
+        $existing = 0
+        try { $existing = [int](Get-Content $pidPath -Raw).Trim() } catch {}
+        if ($existing -gt 0) {
+            $proc = Get-Process -Id $existing -ErrorAction SilentlyContinue
+            if ($proc) {
+                Start-Sleep -Milliseconds 500
+                return
+            }
+        }
+    }
+
     Start-Process -FilePath "py" `
         -ArgumentList "-m","craw" `
         -WorkingDirectory $root `

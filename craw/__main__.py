@@ -1,9 +1,4 @@
-"""Entry point. `python -m craw` starts the daemon.
-
-If launched without a visible console (startup shortcut, hidden window),
-stdout/stderr are redirected to .craw/daemon.log so the daemon is
-inspectable later.
-"""
+﻿"""Entry point. `python -m craw` starts the daemon."""
 
 from __future__ import annotations
 
@@ -12,14 +7,12 @@ from pathlib import Path
 
 
 def _redirect_logs_if_headless() -> None:
-    """If stderr isn't a TTY, send it to a log file."""
     try:
         is_tty = sys.stderr is not None and sys.stderr.isatty()
     except (AttributeError, ValueError):
         is_tty = False
     if is_tty:
         return
-
     log_path = Path(__file__).resolve().parent.parent / ".craw" / "daemon.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -33,21 +26,32 @@ def _redirect_logs_if_headless() -> None:
 def main() -> int:
     _redirect_logs_if_headless()
 
-    from craw.brain.memory import get_memory
-    from craw.brain.reflexes import Reflexes
-    from craw.daemon import Daemon
-    from craw.senses.shell import ShellSense
-    from craw.state import State
+    from craw.brain.pidlock import acquire, release
 
-    state = State.load()
-    memory = get_memory()
-    senses = [ShellSense()]
-    reflexes = Reflexes(memory, state)
-    daemon = Daemon(state=state, memory=memory, senses=senses, reflexes=reflexes)
+    ok, owner = acquire()
+    if not ok:
+        print(f"[craw] another daemon is already running (pid {owner}). exiting.")
+        return 1
+
     try:
-        daemon.run()
+        from craw.brain.memory import get_memory
+        from craw.brain.reflexes import Reflexes
+        from craw.daemon import Daemon
+        from craw.senses.shell import ShellSense
+        from craw.state import State
+
+        state = State.load()
+        memory = get_memory()
+        senses = [ShellSense()]
+        reflexes = Reflexes(memory, state)
+        daemon = Daemon(state=state, memory=memory, senses=senses, reflexes=reflexes)
+        try:
+            daemon.run()
+        finally:
+            memory.close()
     finally:
-        memory.close()
+        release()
+
     return 0
 
 
