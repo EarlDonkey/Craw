@@ -292,6 +292,24 @@ class Daemon:
                 message=Message(text="\n".join(lines), kind="reply"),
             )
 
+        if ask == "readings":
+            from craw.brain.reading import Readings
+            n = int(request.get("n", 10))
+            rs = Readings(self.memory).recent(n)
+            if not rs:
+                return Response(
+                    face=face,
+                    message=Message(text="(nothing read yet)", kind="reply"),
+                )
+            lines = []
+            for r in rs:
+                ts = time.strftime("%m-%d %H:%M", time.localtime(r.at))
+                lines.append(f"[{ts}] {r.title or r.url}")
+            return Response(
+                face=face,
+                message=Message(text="\n".join(lines), kind="reply"),
+            )
+
         text, kind = self.mouth_state.take()
         return Response(face=face, message=Message(text=text, kind=kind))
 
@@ -305,6 +323,7 @@ class Daemon:
             log.body(f"replied: {(reply or '')[:60]}")
             self.memory.say(question, who="user")
             self.memory.say(reply, who="craw")
+            self.mouth_state.clear()
             self.mouth_state.queue(reply, kind="reply")
             self.speaker.say(reply)
         except Exception as exc:

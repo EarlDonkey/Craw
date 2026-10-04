@@ -2,7 +2,7 @@
 
 Every tool is a plain Python function. Every one is safe. Every one is
 reversible or read-only. No arbitrary shell, no arbitrary writes, no
-network. The whitelist is the safety property.
+network beyond the browse whitelist.
 
 If you want to add a tool: write a function, wrap it in Tool(...), and
 register it. That's it. The router picks it up automatically.
@@ -261,7 +261,6 @@ def remember(text: str) -> str:
 # ---- workspace tier ------------------------------------------------------
 
 def write_file(path: str, content: str) -> str:
-    """Write text to a file inside Craw's workspace."""
     from craw.hands.workspace import resolve_safe, MAX_FILE_BYTES
 
     target = resolve_safe(path)
@@ -278,7 +277,6 @@ def write_file(path: str, content: str) -> str:
 
 
 def read_workspace(path: str, max_bytes: int = 4000) -> str:
-    """Read a file from Craw's workspace."""
     from craw.hands.workspace import resolve_safe
 
     target = resolve_safe(path)
@@ -295,7 +293,6 @@ def read_workspace(path: str, max_bytes: int = 4000) -> str:
 
 
 def list_workspace() -> str:
-    """List files in Craw's workspace."""
     from craw.hands.workspace import ensure, WORKSPACE
 
     ensure()
@@ -313,6 +310,41 @@ def list_workspace() -> str:
     return "\n".join(lines)
 
 
+# ---- browse --------------------------------------------------------------
+
+def browse(url: str) -> str:
+    """Fetch a whitelisted URL and return the extracted text."""
+    from craw.hands.browse_policy import BrowsePolicy
+    from craw.hands.browse_runner import fetch
+    from craw.brain.memory import get_memory
+    from craw.brain.reading import Readings
+
+    policy = BrowsePolicy.load()
+    decision = policy.check(url)
+    if not decision.allowed:
+        return f"i can't browse that. {decision.reason}."
+
+    result = fetch(url, policy)
+    if not result.ok:
+        return f"fetch failed: {result.error}"
+
+    # record the reading using the shared memory connection
+    try:
+        mem = get_memory()
+        Readings(mem).record(
+            url=result.url,
+            title=result.title,
+            text=result.text,
+            domain=decision.domain,
+        )
+    except Exception:
+        pass
+
+    body = result.text[:4000]
+    head = f"# {result.title}\n{result.url}\n\n" if result.title else f"{result.url}\n\n"
+    return head + body
+
+
 # ---- run_shell (policy-gated) --------------------------------------------
 
 _POLICY = None
@@ -327,7 +359,6 @@ def _policy():
 
 
 def run_shell(command: str) -> str:
-    """Run a shell command, subject to Craw's policy."""
     from craw.hands.shell_runner import run as run_cmd
     from craw.hands.shell_log import write as log_write
 
@@ -346,7 +377,7 @@ def run_shell(command: str) -> str:
 # ---- registration --------------------------------------------------------
 
 def _register_all() -> None:
-    if REGISTRY.names():          # guard: already populated
+    if REGISTRY.names():
         return
 
     # auto tier
@@ -363,12 +394,14 @@ def _register_all() -> None:
     REGISTRY.register(Tool("active_window", "which window is focused", active_window, tier="auto"))
     REGISTRY.register(Tool("list_processes", "top processes by memory", list_processes, tier="auto"))
 
-    # confirm tier — existing
+    # confirm tier
     REGISTRY.register(Tool("open_app", "open a whitelisted app by name", open_app, tier="confirm",
                            args={"name": "string"}))
     REGISTRY.register(Tool("open_path", "open a file or folder", open_path, tier="confirm",
                            args={"path": "string"}))
-    REGISTRY.register(Tool("open_url", "open a URL in the browser", open_url, tier="confirm",
+    REGISTRY.register(Tool("open_in_browser",
+                           "open a URL in your default browser (shows it to the user)",
+                           open_url, tier="confirm",
                            args={"url": "string"}))
     REGISTRY.register(Tool("play_pause", "toggle media playback", play_pause, tier="confirm"))
     REGISTRY.register(Tool("volume_up", "raise volume", volume_up, tier="confirm"))
@@ -381,7 +414,8 @@ def _register_all() -> None:
                            args={"text": "string"}))
 
     # workspace tier
-    REGISTRY.register(Tool("write_file", "write text to a file in the workspace",
+    REGISTRY.register(Tool("write_file",
+                           "save a note or text to a file (use for remember/save/note requests)",
                            write_file, tier="confirm",
                            args={"path": "string, relative path", "content": "string"}))
     REGISTRY.register(Tool("read_workspace", "read a file from the workspace",
@@ -389,6 +423,12 @@ def _register_all() -> None:
                            args={"path": "string, relative path"}))
     REGISTRY.register(Tool("list_workspace", "list files in the workspace",
                            list_workspace, tier="auto"))
+
+    # browse — read a page *yourself* (Craw reads it, does not open a browser)
+    REGISTRY.register(Tool("read_web_page",
+                           "fetch a web page and read it yourself (does NOT open a browser)",
+                           browse, tier="confirm",
+                           args={"url": "string, full URL"}))
 
     # shell
     REGISTRY.register(Tool("run_shell", "run a shell command (whitelisted)",

@@ -3,9 +3,15 @@
 - observations: things Craw noticed about you
 - conversations: things you said to each other
 - thoughts: Craw's internal monologue, unspoken
+- readings: what Craw has fetched from the web
 
 Everything goes in one sqlite file inside Craw's home. No ORM, no magic.
 The schema is the model.
+
+There is a process-wide singleton — `get_memory()` — so every part of
+Craw shares one connection. Opening a second connection to the same
+file in the same process causes `database is locked` errors under
+concurrent writes. Use `get_memory()` everywhere.
 """
 
 from __future__ import annotations
@@ -16,13 +22,13 @@ import time
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Literal
+from typing import Any, Literal
 
 from craw.state import CRAW_HOME
 
 DB_PATH = CRAW_HOME / "craw.db"
 
-Kind = Literal["observation", "conversation", "thought"]
+Kind = Literal["observation", "conversation", "thought", "reading"]
 
 
 @dataclass
@@ -101,7 +107,7 @@ class Memory:
                     "SELECT COUNT(*) AS n FROM entries WHERE kind = ?", (kind,)
                 ).fetchone()
         return int(row["n"])
-    
+
     def observe(self, text: str, **meta: Any) -> Entry:
         return self.remember("observation", text, meta)
 
@@ -131,3 +137,24 @@ class Memory:
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+
+# --- process-wide singleton -----------------------------------------------
+
+_SINGLETON: Memory | None = None
+_SINGLETON_LOCK = threading.Lock()
+
+
+def get_memory() -> Memory:
+    """The one Memory instance for this process.
+
+    Every tool, daemon thread, and helper should call this. Opening
+    additional connections to the same SQLite file causes 'database is
+    locked' errors under concurrent writes.
+    """
+    global _SINGLETON
+    if _SINGLETON is None:
+        with _SINGLETON_LOCK:
+            if _SINGLETON is None:
+                _SINGLETON = Memory()
+    return _SINGLETON
