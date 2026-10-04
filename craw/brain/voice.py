@@ -99,8 +99,9 @@ def answer(
 
         followup = (
             f"You used {r.tool}. It returned:\n{result}\n\n"
-            f"Tell the user, in ONE line, in your voice. "
-            f"Do NOT invent anything not in that result."
+            f"Using ONLY information in that result, answer the user's "
+            f"question in ONE line, in your voice. If the result does not "
+            f"contain an answer, say so honestly and do not invent one."
         )
         final = _llm.generate(followup, system=sys_prompt)
         return final or result

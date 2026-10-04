@@ -36,6 +36,12 @@ KEYWORD_ROUTES: list[tuple[re.Pattern[str], str, dict[str, Any]]] = [
     (re.compile(r"\bwhat window\b", re.I),      "active_window", {}),
     (re.compile(r"\bwhat'?s? on my clipboard\b", re.I), "read_clipboard", {}),
     (re.compile(r"\b(top|what) processes\b", re.I), "list_processes", {}),
+    (re.compile(r"\bwhat did i read about\b", re.I), "recall", {"query": "MATCH"}),
+    (re.compile(r"\bwhat do you (know|remember) about\b", re.I), "recall", {"query": "MATCH"}),
+    (re.compile(r"\bwhat is\b", re.I), "recall", {"query": "MATCH"}),
+    (re.compile(r"\bwhat are\b", re.I), "recall", {"query": "MATCH"}),
+    (re.compile(r"\btell me about\b", re.I), "recall", {"query": "MATCH"}),
+    (re.compile(r"\bexplain\b", re.I), "recall", {"query": "MATCH"}),
 ]
 
 
@@ -62,10 +68,12 @@ class Route:
     reason: str
 
 
-def _expand_args(args: dict[str, Any]) -> dict[str, Any]:
+def _expand_args(args: dict[str, Any], raw_question: str = "") -> dict[str, Any]:
     out = {}
     for k, v in args.items():
-        if isinstance(v, str) and v.startswith("%USERPROFILE%"):
+        if isinstance(v, str) and v == "MATCH":
+            out[k] = raw_question
+        elif isinstance(v, str) and v.startswith("%USERPROFILE%"):
             out[k] = v.replace("%USERPROFILE%",
                                os.environ.get("USERPROFILE", ""))
         else:
@@ -76,7 +84,7 @@ def _expand_args(args: dict[str, Any]) -> dict[str, Any]:
 def keyword_route(question: str) -> Route | None:
     for pattern, tool, args in KEYWORD_ROUTES:
         if pattern.search(question):
-            return Route(tool=tool, args=_expand_args(args),
+            return Route(tool=tool, args=_expand_args(args, question),
                          reason=f"keyword: {pattern.pattern}")
     return None
 

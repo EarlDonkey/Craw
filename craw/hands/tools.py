@@ -318,6 +318,7 @@ def browse(url: str) -> str:
     from craw.hands.browse_runner import fetch
     from craw.brain.memory import get_memory
     from craw.brain.reading import Readings
+    from craw.brain.library import Library
 
     policy = BrowsePolicy.load()
     decision = policy.check(url)
@@ -331,18 +332,42 @@ def browse(url: str) -> str:
     # record the reading using the shared memory connection
     try:
         mem = get_memory()
-        Readings(mem).record(
+        r = Readings(mem).record(
             url=result.url,
             title=result.title,
             text=result.text,
             domain=decision.domain,
         )
+        # index the full text into FTS so Craw can recall it later
+        try:
+            Library(mem).index_reading(
+                reading_id=r.id,
+                url=result.url,
+                title=result.title,
+                text=result.text,
+            )
+        except Exception:
+            pass
     except Exception:
         pass
 
     body = result.text[:4000]
     head = f"# {result.title}\n{result.url}\n\n" if result.title else f"{result.url}\n\n"
     return head + body
+
+
+# ---- recall --------------------------------------------------------------
+
+def recall(query: str) -> str:
+    """Search Craw's library of readings for content matching a query."""
+    from craw.brain.library import Library
+    from craw.brain.memory import get_memory
+
+    lib = Library(get_memory())
+    result = lib.search_and_format(query, limit=3)
+    if not result:
+        return f"nothing in my library matches {query!r}."
+    return result
 
 
 # ---- run_shell (policy-gated) --------------------------------------------
@@ -431,6 +456,11 @@ def _register_all() -> None:
                            "fetch a web page and read it yourself (does NOT open a browser)",
                            browse, tier="confirm",
                            args={"url": "string, full URL"}))
+    
+    REGISTRY.register(Tool("recall",
+                           "search what you have already read (use for questions about things you read)",
+                           recall, tier="auto",
+                           args={"query": "string"}))
 
     # shell
     REGISTRY.register(Tool("run_shell", "run a shell command (whitelisted)",
