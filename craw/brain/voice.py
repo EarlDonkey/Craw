@@ -1,14 +1,15 @@
 """Craw's voice.
 
-Composes lines. LLM first, rules as silent fallback. A creature should
-be able to say something small without thinking hard.
+Composes lines. LLM first, rules as silent fallback.
 
-Rules of the voice:
-  - one line
-  - no exclamation marks
-  - no emoji
-  - lowercase is fine
-  - silence is better than filler
+Answer pipeline:
+  1. route(question) — one decision: which tool, or none.
+  2. If a tool: execute it. Feed the ACTUAL OUTPUT to the LLM.
+     The LLM's only job is to tell the user what happened, in one line.
+  3. If no tool: plain conversational answer.
+
+The LLM never gets to invent a tool result. If the router says no tool,
+there is no tool. If the router picks a tool, the answer must cite it.
 """
 
 from __future__ import annotations
@@ -20,29 +21,15 @@ from craw.brain.llm import LLM
 from craw.brain.memory import Memory
 from craw.brain.persona import system_prompt
 from craw.brain.reflexes import Impulse
+from craw.brain.router import RAW_OUTPUT_TOOLS, route
 from craw.state import State
 
 
 PHRASES: dict[str, list[str]] = {
-    "repetition": [
-        "{subject}",
-        "{subject}. want to talk about it?",
-        "{subject}. that's a lot.",
-    ],
-    "late_night": [
-        "{subject}",
-        "still up. {subject}",
-        "{subject}. sleep is a thing.",
-    ],
-    "silence": [
-        "{subject}",
-        "{subject}. i noticed.",
-        "still here. {subject}",
-    ],
-    "novelty": [
-        "{subject}",
-        "{subject}. new?",
-    ],
+    "repetition": ["{subject}", "{subject}. want to talk about it?", "{subject}. that's a lot."],
+    "late_night": ["{subject}", "still up. {subject}", "{subject}. sleep is a thing."],
+    "silence":    ["{subject}", "{subject}. i noticed.", "still here. {subject}"],
+    "novelty":    ["{subject}", "{subject}. new?"],
 }
 
 FALLBACK = ["{subject}"]
@@ -64,7 +51,6 @@ def compose(
     milestones=None,
     mood_log=None,
 ) -> str:
-    """Compose a line. LLM first; rules as silent fallback."""
     if _llm.available():
         ctx = build_context(memory, state, milestones=milestones, mood_log=mood_log)
         prompt = (
@@ -89,40 +75,53 @@ def answer(
     milestones=None,
     mood_log=None,
 ) -> str:
-    """Answer a direct question. May call a tool once."""
+    """Answer a question or perform an action. Grounded in real tool output."""
     if not _llm.available():
         return "my mind is offline right now."
 
-    from craw.brain.tool_call import parse_tool_call, execute
-    from craw.hands import REGISTRY
+    from craw.brain.tool_call import execute
 
     ctx = build_context(memory, state, milestones=milestones, mood_log=mood_log)
-    tools_block = REGISTRY.prompt_block()
+    sys_prompt = system_prompt(ctx)
 
+    # Step 1 — route
+    r = route(question, _llm)
+
+    # Step 2a — tool was chosen. Execute it.
+    if r.tool:
+        from craw.brain.tool_call import ToolCall
+        ok, result = execute(ToolCall(name=r.tool, args=r.args))
+        if not ok:
+            return _compose_failure(r.tool, result, sys_prompt)
+
+        if r.tool in RAW_OUTPUT_TOOLS:
+            return result
+
+        followup = (
+            f"You used {r.tool}. It returned:\n{result}\n\n"
+            f"Tell the user, in ONE line, in your voice. "
+            f"Do NOT invent anything not in that result."
+        )
+        final = _llm.generate(followup, system=sys_prompt)
+        return final or result
+
+    # Step 2b — no tool. Plain conversational answer.
     prompt = (
         f"The user says: {question}\n\n"
-        f"Respond in one of two ways:\n"
-        f"  1. If a tool matches the request, output ONLY a JSON object:\n"
-        f'     {{"tool": "<name>", "args": {{...}}}}\n'
-        f"  2. Otherwise, answer in one short sentence, in your voice.\n\n"
-        f"Do not describe what you would do. Either call the tool or answer."
+        f"Answer in one short sentence, in your voice. "
+        f"If you don't know, say so. Do NOT invent facts about their machine."
     )
-    text = _llm.generate_with_tools(prompt, system=system_prompt(ctx), tools_block=tools_block)
+    text = _llm.generate(prompt, system=sys_prompt)
+    return text or "i don't have an answer for that."
 
-    call = parse_tool_call(text)
-    if call is None:
-        return text or "i don't have an answer for that."
 
-    ok, result = execute(call)
-    if ok:
-        followup = (
-            f"You used {call.name}. It returned:\n{result}\n\n"
-            f"Tell the user, in one line, in your voice."
-        )
-    else:
-        followup = (
-            f"You tried {call.name} but it failed: {result}\n\n"
-            f"Tell the user, in one line."
-        )
-    final = _llm.generate(followup, system=system_prompt(ctx))
-    return final or result
+def _compose_failure(tool: str, error: str, sys_prompt: str) -> str:
+    """When a tool refuses or fails, say so — briefly — and never lie."""
+    prompt = (
+        f"You tried to use {tool} but it did not succeed. The exact reason was:\n"
+        f"{error}\n\n"
+        f"Tell the user in one line, in your voice, that you couldn't do it. "
+        f"Be honest. Do not invent a success."
+    )
+    final = _llm.generate(prompt, system=sys_prompt)
+    return final or f"i couldn't do that. {error}"

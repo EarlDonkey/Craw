@@ -1,15 +1,14 @@
 """Parsing and routing for Craw's tools.
 
-The LLM replies with either plain text (Craw just talks) or a small
-JSON object (Craw wants to call a tool). This module separates the two
-and executes the tool if allowed.
+The router picks a tool and its args. This module executes it with
+policy checks and argument sanitization.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from craw.hands import REGISTRY, policy
@@ -21,27 +20,19 @@ _TOOL_PATTERN = re.compile(r"\{[^{}]*\"tool\"[^{}]*\}", re.DOTALL)
 @dataclass
 class ToolCall:
     name: str
-    args: dict[str, Any]
+    args: dict[str, Any] = field(default_factory=dict)
 
 
 def parse_tool_call(text: str) -> ToolCall | None:
-    """Extract a tool call from LLM output, if any.
-
-    The LLM is instructed to return exactly one JSON object when it wants
-    a tool. It often wraps it in prose anyway. We dig it out.
-    """
+    """Extract a tool call from arbitrary LLM output. Used only by legacy paths."""
     if not text:
         return None
-
-    # Fast path: whole string is JSON
     try:
         data = json.loads(text.strip())
         if isinstance(data, dict) and "tool" in data:
             return ToolCall(name=str(data["tool"]), args=data.get("args") or {})
     except json.JSONDecodeError:
         pass
-
-    # Slow path: find the first {...} containing "tool"
     m = _TOOL_PATTERN.search(text)
     if not m:
         return None
@@ -62,17 +53,13 @@ def execute(call: ToolCall) -> tuple[bool, str]:
     if not policy.is_allowed(tool):
         return False, f"tool not allowed: {call.name}"
 
-    # Sanitize args: strings only, trimmed, bounded length.
+    # Sanitize: coerce to expected arg types where obvious.
     clean: dict[str, Any] = {}
     for k, v in (call.args or {}).items():
         if isinstance(v, str):
             v = v.strip()
-            if len(v) > 200:
-                v = v[:200]
-            # Common 3B hallucination: embedding shell syntax in the arg.
-            # If the value contains shell-ish operators, drop to first token.
-            if any(x in v for x in (" && ", " || ", " | ", " -m ", " ; ")):
-                v = v.split()[0]
+            if len(v) > 500:
+                v = v[:500]
         clean[k] = v
 
     try:

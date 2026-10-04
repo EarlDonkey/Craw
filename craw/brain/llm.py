@@ -5,21 +5,27 @@ die — it just goes quiet and lets the rule-based voice take over, so the
 creature survives its own fainting.
 
 Never used for the face. Only used for speech.
+
+Failure caching:
+  - Success cached for 60s.
+  - Failure cached for only 5s, so a transient slowness (model loading,
+    brief timeout) recovers automatically.
+  - A single failed generation does NOT poison the available flag.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+OLLAMA_TAGS = "http://127.0.0.1:11434/api/tags"
 DEFAULT_MODEL = "llama3.2:3b"
 
 
-# Word-boundary replacements for the 3B model's most persistent tic:
-# talking about you in the third person. Order matters — longer first.
 _THIRD_PERSON_FIXES = [
     (re.compile(r"\bthe user's\b", re.IGNORECASE), "your"),
     (re.compile(r"\bthe user\b", re.IGNORECASE), "you"),
@@ -29,32 +35,45 @@ _THIRD_PERSON_FIXES = [
 
 
 class LLM:
-    def __init__(self, model: str = DEFAULT_MODEL, timeout: float = 30.0) -> None:
+    def __init__(self, model: str = DEFAULT_MODEL, timeout: float = 90.0) -> None:
         self.model = model
         self.timeout = timeout
         self._available: bool | None = None
+        self._checked_at: float = 0.0
 
     def available(self) -> bool:
-        """Cheap check — has ollama answered us recently?"""
-        if self._available is False:
+        now = time.time()
+        if self._available is True and now - self._checked_at < 60:
+            return True
+        if self._available is False and now - self._checked_at < 5:
             return False
         try:
-            req = urllib.request.Request(
-                "http://127.0.0.1:11434/api/tags",
-                method="GET",
-            )
+            req = urllib.request.Request(OLLAMA_TAGS, method="GET")
             with urllib.request.urlopen(req, timeout=2.0) as r:
                 self._available = r.status == 200
-                return self._available
         except (urllib.error.URLError, TimeoutError, OSError):
             self._available = False
-            return False
+        self._checked_at = now
+        return self._available
+
+    def _post(self, payload: dict) -> str:
+        try:
+            req = urllib.request.Request(
+                OLLAMA_URL,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            return (data.get("response") or "").strip()
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+            return ""
 
     def generate(self, prompt: str, system: str = "") -> str:
-        """One-shot. Non-streaming for now. Returns the text or ''."""
         if not self.available():
             return ""
-        payload = {
+        text = self._post({
             "model": self.model,
             "prompt": prompt,
             "system": system,
@@ -64,61 +83,24 @@ class LLM:
                 "num_predict": 80,
                 "stop": ["\n\n", "\nUser:", "\nHuman:"],
             },
-        }
-        try:
-            req = urllib.request.Request(
-                OLLAMA_URL,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
-                data = json.loads(r.read().decode("utf-8"))
-            text = (data.get("response") or "").strip()
-            return self._tidy(text)
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
-            self._available = False
-            return ""
+        })
+        return self._tidy(text)
 
-    def generate_with_tools(
-        self,
-        prompt: str,
-        system: str,
-        tools_block: str,
-    ) -> str:
-        """Same as generate(), but the system prompt includes the tool list."""
-        tool_instructions = (
-            "\n\nYou have tools. If the user asks you to DO something that "
-            "matches a tool, reply with a single JSON object and nothing else:\n"
-            '{"tool": "<name>", "args": {...}}\n'
-            'Example: {"tool": "open_app", "args": {"name": "notepad"}}\n'
-            "Otherwise just answer in one short line.\n\n"
-            + tools_block
-        )
-        payload = {
+    def generate_json(self, prompt: str, system: str = "") -> str:
+        """Strict JSON mode for the router."""
+        if not self.available():
+            return ""
+        return self._post({
             "model": self.model,
             "prompt": prompt,
-            "system": system + tool_instructions,
+            "system": system,
             "stream": False,
+            "format": "json",
             "options": {
-                "temperature": 0.3,
+                "temperature": 0.1,
                 "num_predict": 120,
-                "stop": ["\n\n", "\nUser:", "\nHuman:", "```"],
             },
-        }
-        try:
-            req = urllib.request.Request(
-                OLLAMA_URL,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
-                data = json.loads(r.read().decode("utf-8"))
-            return self._tidy((data.get("response") or "").strip())
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
-            self._available = False
-            return ""
+        })
 
     @staticmethod
     def _tidy(text: str) -> str:

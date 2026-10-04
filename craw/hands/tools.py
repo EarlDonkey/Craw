@@ -383,9 +383,11 @@ def _register_all() -> None:
     # auto tier
     REGISTRY.register(Tool("tell_time", "what time is it", tell_time, tier="auto"))
     REGISTRY.register(Tool("tell_date", "what day is it", tell_date, tier="auto"))
-    REGISTRY.register(Tool("list_dir", "list files in a folder", list_dir, tier="auto",
+    REGISTRY.register(Tool("list_dir", "list files and subfolders inside a folder",
+                           list_dir, tier="auto",
                            args={"path": "string, folder path (optional)"}))
-    REGISTRY.register(Tool("search_files", "find files by name", search_files, tier="auto",
+    REGISTRY.register(Tool("search_files", "find files by name (not folders — use list_dir for folders)",
+                           search_files, tier="auto",
                            args={"query": "string", "folder": "string (optional)"}))
     REGISTRY.register(Tool("read_file", "read a text file", read_file, tier="auto",
                            args={"path": "string", "max_bytes": "int (optional)"}))
