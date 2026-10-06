@@ -23,7 +23,7 @@ import urllib.request
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 OLLAMA_TAGS = "http://127.0.0.1:11434/api/tags"
-DEFAULT_MODEL = "llama3.2:3b"
+DEFAULT_MODEL = "llama3.1:8b" #llama3.2:3b
 
 
 _THIRD_PERSON_FIXES = [
@@ -35,7 +35,7 @@ _THIRD_PERSON_FIXES = [
 
 
 class LLM:
-    def __init__(self, model: str = DEFAULT_MODEL, timeout: float = 90.0) -> None:
+    def __init__(self, model: str = DEFAULT_MODEL, timeout: float = 180.0) -> None:  # default: 90
         self.model = model
         self.timeout = timeout
         self._available: bool | None = None

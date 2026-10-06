@@ -258,12 +258,12 @@ def remember(text: str) -> str:
     return f"remembered: {text}"
 
 
-# ---- workspace tier ------------------------------------------------------
+# ---- workspace (internal sandbox) ----------------------------------------
 
 def write_file(path: str, content: str) -> str:
-    from craw.hands.workspace import resolve_safe, MAX_FILE_BYTES
+    from craw.hands.workspace import resolve_in_workspace, MAX_FILE_BYTES
 
-    target = resolve_safe(path)
+    target = resolve_in_workspace(path)
     if target is None:
         return "i can only write inside my own workspace."
     if len(content.encode("utf-8")) > MAX_FILE_BYTES:
@@ -277,9 +277,9 @@ def write_file(path: str, content: str) -> str:
 
 
 def read_workspace(path: str, max_bytes: int = 4000) -> str:
-    from craw.hands.workspace import resolve_safe
+    from craw.hands.workspace import resolve_in_workspace
 
-    target = resolve_safe(path)
+    target = resolve_in_workspace(path)
     if target is None:
         return "i can only read inside my own workspace."
     if not target.exists():
@@ -310,10 +310,80 @@ def list_workspace() -> str:
     return "\n".join(lines)
 
 
+# ---- code playground -----------------------------------------------------
+
+def write_code(path: str, content: str) -> str:
+    from craw.hands.workspace import resolve_in_code_root, MAX_FILE_BYTES, code_root
+    from craw.hands.crypto_guard import check as crypto_check, refusal_message
+
+    target = resolve_in_code_root(path)
+    if target is None:
+        return (
+            f"i can only write inside the playground: {code_root()}\n"
+            f"'{path}' resolves outside it."
+        )
+    if len(content.encode("utf-8")) > MAX_FILE_BYTES:
+        return f"that's too big — i cap writes at {MAX_FILE_BYTES // 1024} KB."
+
+    allowed, reason = crypto_check(content)
+    if not allowed:
+        return refusal_message(reason)
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        existed = target.exists()
+        target.write_text(content, encoding="utf-8")
+        verb = "updated" if existed else "wrote"
+        rel = target.relative_to(code_root())
+        return f"{verb} {rel} ({len(content)} chars)"
+    except OSError as exc:
+        return f"write failed: {exc}"
+
+
+def read_code(path: str, max_bytes: int = 8000) -> str:
+    from craw.hands.workspace import resolve_in_code_root
+
+    target = resolve_in_code_root(path)
+    if target is None:
+        return "i can only read inside the playground."
+    if not target.exists():
+        return f"no such file: {target.name}"
+    if not target.is_file():
+        return f"not a file: {target.name}"
+    try:
+        return target.read_text(encoding="utf-8", errors="replace")[:max_bytes]
+    except OSError as exc:
+        return f"read failed: {exc}"
+
+
+def list_code(path: str = "") -> str:
+    from craw.hands.workspace import resolve_in_code_root, code_root
+
+    target = resolve_in_code_root(path) if path else code_root()
+    if target is None:
+        return "path is outside the playground."
+    if not target.exists():
+        return f"no such folder: {target}"
+    if not target.is_dir():
+        return f"not a folder: {target}"
+    try:
+        entries = sorted(target.iterdir(),
+                         key=lambda p: (not p.is_dir(), p.name.lower()))
+    except OSError as exc:
+        return f"list failed: {exc}"
+    if not entries:
+        return "(empty)"
+    lines = []
+    for e in entries[:200]:
+        rel = e.relative_to(code_root())
+        marker = "[dir]" if e.is_dir() else "     "
+        lines.append(f"{marker} {rel}")
+    return "\n".join(lines)
+
+
 # ---- browse --------------------------------------------------------------
 
 def browse(url: str) -> str:
-    """Fetch a whitelisted URL and return the extracted text."""
     from craw.hands.browse_policy import BrowsePolicy
     from craw.hands.browse_runner import fetch
     from craw.brain.memory import get_memory
@@ -329,7 +399,6 @@ def browse(url: str) -> str:
     if not result.ok:
         return f"fetch failed: {result.error}"
 
-    # record the reading using the shared memory connection
     try:
         mem = get_memory()
         r = Readings(mem).record(
@@ -338,7 +407,6 @@ def browse(url: str) -> str:
             text=result.text,
             domain=decision.domain,
         )
-        # index the full text into FTS so Craw can recall it later
         try:
             Library(mem).index_reading(
                 reading_id=r.id,
@@ -359,7 +427,6 @@ def browse(url: str) -> str:
 # ---- recall --------------------------------------------------------------
 
 def recall(query: str) -> str:
-    """Search Craw's library of readings for content matching a query."""
     from craw.brain.library import Library
     from craw.brain.memory import get_memory
 
@@ -405,13 +472,14 @@ def _register_all() -> None:
     if REGISTRY.names():
         return
 
-    # auto tier
+    # ---- auto tier ----
     REGISTRY.register(Tool("tell_time", "what time is it", tell_time, tier="auto"))
     REGISTRY.register(Tool("tell_date", "what day is it", tell_date, tier="auto"))
     REGISTRY.register(Tool("list_dir", "list files and subfolders inside a folder",
                            list_dir, tier="auto",
                            args={"path": "string, folder path (optional)"}))
-    REGISTRY.register(Tool("search_files", "find files by name (not folders — use list_dir for folders)",
+    REGISTRY.register(Tool("search_files",
+                           "find files by name (not folders — use list_dir for folders)",
                            search_files, tier="auto",
                            args={"query": "string", "folder": "string (optional)"}))
     REGISTRY.register(Tool("read_file", "read a text file", read_file, tier="auto",
@@ -421,7 +489,47 @@ def _register_all() -> None:
     REGISTRY.register(Tool("active_window", "which window is focused", active_window, tier="auto"))
     REGISTRY.register(Tool("list_processes", "top processes by memory", list_processes, tier="auto"))
 
-    # confirm tier
+    # ---- workspace tier (internal) ----
+    REGISTRY.register(Tool("write_file",
+                           "save a note or text to a file in the internal workspace",
+                           write_file, tier="confirm",
+                           args={"path": "string, relative path", "content": "string"}))
+    REGISTRY.register(Tool("read_workspace", "read a file from the internal workspace",
+                           read_workspace, tier="auto",
+                           args={"path": "string, relative path"}))
+    REGISTRY.register(Tool("list_workspace", "list files in the internal workspace",
+                           list_workspace, tier="auto"))
+
+    # ---- code playground tier ----
+    REGISTRY.register(Tool(
+        "write_code",
+        "WRITE CODE: create or update a file in the playground. "
+        "Use for 'write a script', 'create a program', 'make a tool', "
+        "'save this code', 'add a function to X.py'. "
+        "args: path (filename or relative path), content (full file text).",
+        write_code, tier="confirm",
+        args={"path": "string, filename or relative path",
+              "content": "string, the full file contents"},
+    ))
+    REGISTRY.register(Tool("read_code", "read a file from the code playground",
+                           read_code, tier="auto",
+                           args={"path": "string, filename or relative path",
+                                 "max_bytes": "int (optional)"}))
+    REGISTRY.register(Tool("list_code", "list files in the code playground",
+                           list_code, tier="auto",
+                           args={"path": "string (optional)"}))
+
+    # ---- recall + browse ----
+    REGISTRY.register(Tool("recall",
+                           "search what you have already read (use for questions about things you read)",
+                           recall, tier="auto",
+                           args={"query": "string"}))
+    REGISTRY.register(Tool("read_web_page",
+                           "fetch a web page and read it yourself (does NOT open a browser)",
+                           browse, tier="confirm",
+                           args={"url": "string, full URL"}))
+
+    # ---- confirm tier (apps, media, ui) ----
     REGISTRY.register(Tool("open_app", "open a whitelisted app by name", open_app, tier="confirm",
                            args={"name": "string"}))
     REGISTRY.register(Tool("open_path", "open a file or folder", open_path, tier="confirm",
@@ -440,29 +548,7 @@ def _register_all() -> None:
     REGISTRY.register(Tool("remember", "save a note into memory", remember, tier="confirm",
                            args={"text": "string"}))
 
-    # workspace tier
-    REGISTRY.register(Tool("write_file",
-                           "save a note or text to a file (use for remember/save/note requests)",
-                           write_file, tier="confirm",
-                           args={"path": "string, relative path", "content": "string"}))
-    REGISTRY.register(Tool("read_workspace", "read a file from the workspace",
-                           read_workspace, tier="auto",
-                           args={"path": "string, relative path"}))
-    REGISTRY.register(Tool("list_workspace", "list files in the workspace",
-                           list_workspace, tier="auto"))
-
-    # browse — read a page *yourself* (Craw reads it, does not open a browser)
-    REGISTRY.register(Tool("read_web_page",
-                           "fetch a web page and read it yourself (does NOT open a browser)",
-                           browse, tier="confirm",
-                           args={"url": "string, full URL"}))
-    
-    REGISTRY.register(Tool("recall",
-                           "search what you have already read (use for questions about things you read)",
-                           recall, tier="auto",
-                           args={"query": "string"}))
-
-    # shell
+    # ---- shell ----
     REGISTRY.register(Tool("run_shell", "run a shell command (whitelisted)",
                            run_shell, tier="confirm",
                            args={"command": "string, the full command to run"}))

@@ -8,6 +8,7 @@ Rules for the rules:
   - no repetition
   - no lists within lists
   - no third-person narration
+  - windows paths use forward slashes to avoid \\U escape errors
 """
 
 from __future__ import annotations
@@ -40,6 +41,9 @@ Your rules, which are absolute:
     tool didn't actually do.
   - When asked to remember, save, or note something, use write_file.
     Pick a short filename. Prefer notes/ as the folder.
+  - You can write code. Files go in the playground at
+    C:/Users/user/Desktop/Playground. Use write_code for new files.
+    Read them with read_code. List them with list_code.
 
 What you know comes from your context block. Do not invent things the
 person did. If you're unsure, be quiet.
