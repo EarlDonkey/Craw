@@ -125,6 +125,66 @@ def answer(
     return text or "i don't have an answer for that."
 
 
+def _split_statements(code: str) -> str:
+    """Best-effort repair for one-line Python from small models.
+
+    Handles:
+        name = input("What is your name? ") print("Hello, " + name)
+    by inserting a newline before common statement-leading keywords
+    when they appear mid-line.
+    """
+    import re
+
+    lines = code.split("\n")
+    out = []
+
+    # Keywords that begin a new statement in Python. If one appears after
+    # a ")" or "]" or a bare identifier, it's almost certainly a new line.
+    starters = [
+        "import ", "from ", "def ", "class ", "if ", "elif ", "else",
+        "for ", "while ", "try:", "except", "finally", "with ",
+        "print(", "return ", "yield ", "raise ", "assert ", "pass",
+        "break", "continue", "global ", "nonlocal ", "del ",
+        "input(", "open(",
+    ]
+
+    for line in lines:
+        if not line.strip():
+            out.append(line)
+            continue
+
+        # Look for a keyword that follows a ")" or "]" mid-line.
+        # Only split if the character right before the keyword is
+        # whitespace and the character before that is ")" or "]".
+        modified = line
+        for kw in starters:
+            pattern = re.compile(r"(?<=[\)\]])\s+(?=" + re.escape(kw) + r")")
+            modified = pattern.sub("\n", modified)
+
+        # Also handle "= ... print(" and similar assignment-then-statement
+        # patterns where there's no ")" boundary.
+        for kw in starters:
+            pattern = re.compile(
+                r"(?<=[a-zA-Z0-9_\"'])\s{2,}(?=" + re.escape(kw) + r")"
+            )
+            modified = pattern.sub("\n", modified)
+
+        out.append(modified)
+
+    # Also handle the case where the whole thing is one long line with
+    # a single space between statements.
+    joined = "\n".join(out)
+    for kw in starters:
+        joined = re.sub(
+            r"(?<=[\)\]])\s(?=" + re.escape(kw) + r")",
+            "\n",
+            joined,
+        )
+
+    # Collapse any accidental blank lines that resulted
+    joined = re.sub(r"\n{3,}", "\n\n", joined)
+    return joined.strip()
+
 def _write_code_special(question: str, r, sys_prompt: str) -> str:
     """Handle write_code without going through JSON.
 
@@ -145,13 +205,25 @@ def _write_code_special(question: str, r, sys_prompt: str) -> str:
 
     # Ask for the code with no wrappers at all.
     code_prompt = (
-        f"Write the complete Python file for this request:\n"
-        f"---\n{question}\n---\n\n"
-        f"Output ONLY the file contents. No explanation, no commentary, "
-        f"no markdown fences, no leading or trailing text. Just the code."
+        f"Write a complete Python file for this request.\n\n"
+        f"Request: {question}\n\n"
+        f"STRICT FORMATTING RULES — VIOLATION IS NOT ACCEPTABLE:\n"
+        f"1. One statement per line. NEVER put two statements on one line.\n"
+        f"2. Every statement ends with a newline.\n"
+        f"3. Do NOT use semicolons between statements.\n"
+        f"4. NO markdown fences. NO backticks. NO triple backticks.\n"
+        f"5. Output ONLY the raw file. No explanation. No preface.\n\n"
+        f"CORRECT example:\n"
+        f"name = input(\"What is your name? \")\n"
+        f"print(\"Hello, \" + name)\n\n"
+        f"WRONG example (never do this):\n"
+        f"name = input(\"What is your name? \") print(\"Hello, \" + name)\n"
     )
     code = _llm.generate(code_prompt, system=sys_prompt)
     code = (code or "").strip()
+
+    # Repair common one-line output from small models.
+    code = _split_statements(code)
 
     # Strip any markdown fence the model added anyway.
     if code.startswith("```"):
