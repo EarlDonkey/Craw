@@ -41,11 +41,11 @@ ALLOWED_APPS: dict[str, str] = {
 
 # ---- auto tier -----------------------------------------------------------
 
-def tell_time() -> str:
+def tell_time(**_ignored) -> str:
     return time.strftime("%H:%M")
 
 
-def tell_date() -> str:
+def tell_date(**_ignored) -> str:
     return time.strftime("%A, %B %d, %Y")
 
 

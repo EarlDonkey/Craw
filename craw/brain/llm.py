@@ -8,8 +8,7 @@ Never used for the face. Only used for speech.
 
 Failure caching:
   - Success cached for 60s.
-  - Failure cached for only 5s, so a transient slowness (model loading,
-    brief timeout) recovers automatically.
+  - Failure cached for only 5s, so a transient slowness recovers.
   - A single failed generation does NOT poison the available flag.
 """
 
@@ -23,7 +22,7 @@ import urllib.request
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 OLLAMA_TAGS = "http://127.0.0.1:11434/api/tags"
-DEFAULT_MODEL = "llama3.1:8b" #llama3.2:3b
+DEFAULT_MODEL = "gpt-oss:20b"
 
 
 _THIRD_PERSON_FIXES = [
@@ -35,7 +34,7 @@ _THIRD_PERSON_FIXES = [
 
 
 class LLM:
-    def __init__(self, model: str = DEFAULT_MODEL, timeout: float = 180.0) -> None:  # default: 90
+    def __init__(self, model: str = DEFAULT_MODEL, timeout: float = 240.0) -> None:
         self.model = model
         self.timeout = timeout
         self._available: bool | None = None
@@ -57,6 +56,8 @@ class LLM:
         return self._available
 
     def _post(self, payload: dict) -> str:
+        # gpt-oss uses a different chat template; Ollama needs --jinja.
+        payload.setdefault("options", {})["jinja"] = True
         try:
             req = urllib.request.Request(
                 OLLAMA_URL,
@@ -80,7 +81,7 @@ class LLM:
             "stream": False,
             "options": {
                 "temperature": 0.7,
-                "num_predict": 80,
+                "num_predict": 200,
                 "stop": ["\n\n", "\nUser:", "\nHuman:"],
             },
         })
@@ -98,7 +99,7 @@ class LLM:
             "format": "json",
             "options": {
                 "temperature": 0.1,
-                "num_predict": 120,
+                "num_predict": 200,
             },
         })
 

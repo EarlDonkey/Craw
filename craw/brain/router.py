@@ -1,8 +1,8 @@
 """Craw's router.
 
 Before the LLM can answer, it must choose: use a tool, or don't. This
-removes the "just answer" escape hatch that let the 3B model hallucinate
-tool use. The router runs *first*, always.
+removes the "just answer" escape hatch that let the small model
+hallucinate tool use. The router runs *first*, always.
 
 Output is one of:
   {"tool": "<name>", "args": {...}}    — call this tool
@@ -23,8 +23,7 @@ from craw.hands import REGISTRY
 
 
 # Conversational questions that should NEVER route to a tool.
-# Checked BEFORE keyword routes and before the LLM. If any of these match,
-# we answer directly with the LLM as plain text.
+# Checked BEFORE keyword routes and before the LLM.
 _FORCE_NONE = [
     re.compile(r"\bhow are you\b", re.I),
     re.compile(r"\bhow do you feel\b", re.I),
@@ -43,11 +42,14 @@ KEYWORD_ROUTES: list[tuple[re.Pattern[str], str, dict[str, Any]]] = [
     (re.compile(r"\bwhat time\b", re.I),        "tell_time", {}),
     (re.compile(r"\bwhat day\b", re.I),         "tell_date", {}),
     (re.compile(r"\bwhat date\b", re.I),        "tell_date", {}),
-    (re.compile(r"\blist (my )?downloads\b", re.I), "list_dir",
+    (re.compile(r"\bwhat did i read about\b", re.I), "recall", {"query": "MATCH"}),
+    (re.compile(r"\bwhat do you (know|remember) about\b", re.I), "recall", {"query": "MATCH"}),
+    (re.compile(r"\baccording to what you read\b", re.I), "recall", {"query": "MATCH"}),
+    (re.compile(r"\blist (my )?downloads?\b", re.I), "list_dir",
      {"path": "%USERPROFILE%\\Downloads"}),
-    (re.compile(r"\blist (my )?desktop\b", re.I),   "list_dir",
+    (re.compile(r"\blist (my )?desktops?\b", re.I),   "list_dir",
      {"path": "%USERPROFILE%\\Desktop"}),
-    (re.compile(r"\blist (my )?documents\b", re.I), "list_dir",
+    (re.compile(r"\blist (my )?documents?\b", re.I), "list_dir",
      {"path": "%USERPROFILE%\\Documents"}),
     (re.compile(r"\blist (my )?(playground|code)\b", re.I), "list_code", {}),
     (re.compile(r"\bwhat'?s in (my )?playground\b", re.I), "list_code", {}),
@@ -59,7 +61,7 @@ KEYWORD_ROUTES: list[tuple[re.Pattern[str], str, dict[str, Any]]] = [
 
 
 # Tools whose output should be shown RAW to the user, not paraphrased.
-# Note: recall is NOT here. The LLM summarizes what it retrieved.
+# recall is NOT here — the LLM summarizes what was retrieved.
 RAW_OUTPUT_TOOLS = {
     "list_dir",
     "search_files",
@@ -75,6 +77,14 @@ RAW_OUTPUT_TOOLS = {
     "run_shell",
     "read_web_page",
     "readings",
+}
+
+
+# Tools the LLM router is NOT allowed to pick on its own.
+# These can only be reached via a keyword route.
+LLM_FORBIDDEN_TOOLS = {
+    "recall",
+    "write_code",
 }
 
 
@@ -100,12 +110,9 @@ def _expand_args(args: dict[str, Any], raw_question: str = "") -> dict[str, Any]
 
 def keyword_route(question: str) -> Route | None:
     """Fast-path: forced-none and keyword routes. None means try the LLM."""
-    # 1. Conversational questions skip routing entirely.
     for pat in _FORCE_NONE:
         if pat.search(question):
             return Route(tool=None, args={}, reason=f"forced-none: {pat.pattern}")
-
-    # 2. Explicit keyword matches.
     for pattern, tool, args in KEYWORD_ROUTES:
         if pattern.search(question):
             return Route(tool=tool,
@@ -124,7 +131,7 @@ def llm_route(question: str, llm: LLM) -> Route:
         f"You are a ROUTER. Your only job is to pick a tool or say NONE.\n\n"
         f"CRITICAL: Most questions are NOT tool requests. Pick NONE for:\n"
         f"  - feelings or state: 'how are you', 'how do you feel'\n"
-        f"  - identity: 'what are you', 'where do you come from', 'who made you'\n"
+        f"  - identity: 'what are you', 'where do you come from'\n"
         f"  - opinions: 'what do you think of X', 'do you like Y'\n"
         f"  - conversation: 'hello', 'what's up', 'tell me a joke'\n"
         f"  - general knowledge: 'what is an atom', 'what color is the sky',\n"
@@ -136,8 +143,9 @@ def llm_route(question: str, llm: LLM) -> Route:
         f"  - system: 'system status', 'what window am i looking at'\n"
         f"  - web: 'read the wikipedia page on X'\n"
         f"  - code: 'write a script that does X'\n"
-        f"  - memory: 'what did i READ about X', 'what do you REMEMBER about X'\n"
         f"  - shell: 'run git status'\n\n"
+        f"Do NOT pick recall. Do NOT pick write_code. Those are handled\n"
+        f"by other code paths.\n\n"
         f'Reply with a single line of JSON: {{"tool": "<name>", "args": {{...}}}} or {{"tool": "none"}}\n\n'
         f"{tools_block}"
     )
@@ -166,9 +174,22 @@ def llm_route(question: str, llm: LLM) -> Route:
     if REGISTRY.get(tool) is None:
         return Route(tool=None, args={}, reason=f"llm: unknown tool {tool}")
 
+    if tool in LLM_FORBIDDEN_TOOLS:
+        return Route(tool=None, args={},
+                     reason=f"llm: {tool} is keyword-only")
+
     args = data.get("args") or {}
     if not isinstance(args, dict):
         args = {}
+
+    # Strip any arguments the tool doesn't actually accept.
+    tool_obj = REGISTRY.get(tool)
+    if tool_obj and tool_obj.args:
+        allowed = set(tool_obj.args.keys())
+        args = {k: v for k, v in args.items() if k in allowed}
+    else:
+        args = {}
+
     return Route(tool=tool, args=args, reason=f"llm: chose {tool}")
 
 
