@@ -312,6 +312,46 @@ def list_workspace() -> str:
 
 # ---- code playground -----------------------------------------------------
 
+def _strip_fences(text: str) -> str:
+    """Remove markdown code fences from LLM output.
+
+    Handles all these cases:
+
+        ```python\\ncode\\n```
+        ```python code```
+        ```\\ncode\\n```
+        ```code```
+        code (no fences)
+        code```
+
+    Returns the bare content with the fence and language tag removed.
+    """
+    text = text.strip()
+
+    # Opening fence
+    if text.startswith("```"):
+        after = text[3:]
+        # Find where the language tag ends: newline or first whitespace
+        nl = after.find("\n")
+        sp = after.find(" ")
+        if nl != -1 and (sp == -1 or nl < sp):
+            # multi-line fence: strip through the newline
+            text = after[nl + 1:]
+        elif sp != -1:
+            # one-line fence with language tag: strip through the space
+            text = after[sp + 1:]
+        else:
+            # bare ``` with no language tag, no space
+            text = after
+
+    # Closing fence
+    text = text.rstrip()
+    if text.endswith("```"):
+        text = text[:-3]
+
+    return text.strip()
+
+
 def write_code(path: str, content: str) -> str:
     from craw.hands.workspace import resolve_in_code_root, MAX_FILE_BYTES, code_root
     from craw.hands.crypto_guard import check as crypto_check, refusal_message
@@ -322,6 +362,9 @@ def write_code(path: str, content: str) -> str:
             f"i can only write inside the playground: {code_root()}\n"
             f"'{path}' resolves outside it."
         )
+
+    content = _strip_fences(content)
+
     if len(content.encode("utf-8")) > MAX_FILE_BYTES:
         return f"that's too big — i cap writes at {MAX_FILE_BYTES // 1024} KB."
 
@@ -472,7 +515,7 @@ def _register_all() -> None:
     if REGISTRY.names():
         return
 
-    # ---- auto tier ----
+    # auto tier
     REGISTRY.register(Tool("tell_time", "what time is it", tell_time, tier="auto"))
     REGISTRY.register(Tool("tell_date", "what day is it", tell_date, tier="auto"))
     REGISTRY.register(Tool("list_dir", "list files and subfolders inside a folder",
@@ -489,7 +532,7 @@ def _register_all() -> None:
     REGISTRY.register(Tool("active_window", "which window is focused", active_window, tier="auto"))
     REGISTRY.register(Tool("list_processes", "top processes by memory", list_processes, tier="auto"))
 
-    # ---- workspace tier (internal) ----
+    # workspace
     REGISTRY.register(Tool("write_file",
                            "save a note or text to a file in the internal workspace",
                            write_file, tier="confirm",
@@ -500,7 +543,7 @@ def _register_all() -> None:
     REGISTRY.register(Tool("list_workspace", "list files in the internal workspace",
                            list_workspace, tier="auto"))
 
-    # ---- code playground tier ----
+    # code playground
     REGISTRY.register(Tool(
         "write_code",
         "WRITE CODE: create or update a file in the playground. "
@@ -519,7 +562,7 @@ def _register_all() -> None:
                            list_code, tier="auto",
                            args={"path": "string (optional)"}))
 
-    # ---- recall + browse ----
+    # recall + browse
     REGISTRY.register(Tool("recall",
                            "search what you have already read (use for questions about things you read)",
                            recall, tier="auto",
@@ -529,7 +572,7 @@ def _register_all() -> None:
                            browse, tier="confirm",
                            args={"url": "string, full URL"}))
 
-    # ---- confirm tier (apps, media, ui) ----
+    # confirm tier — apps, media, ui
     REGISTRY.register(Tool("open_app", "open a whitelisted app by name", open_app, tier="confirm",
                            args={"name": "string"}))
     REGISTRY.register(Tool("open_path", "open a file or folder", open_path, tier="confirm",
@@ -548,7 +591,7 @@ def _register_all() -> None:
     REGISTRY.register(Tool("remember", "save a note into memory", remember, tier="confirm",
                            args={"text": "string"}))
 
-    # ---- shell ----
+    # shell
     REGISTRY.register(Tool("run_shell", "run a shell command (whitelisted)",
                            run_shell, tier="confirm",
                            args={"command": "string, the full command to run"}))

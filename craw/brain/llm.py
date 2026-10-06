@@ -22,7 +22,7 @@ import urllib.request
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 OLLAMA_TAGS = "http://127.0.0.1:11434/api/tags"
-DEFAULT_MODEL = "gpt-oss:20b"
+DEFAULT_MODEL = "qwen2.5-coder:7b"
 
 
 _THIRD_PERSON_FIXES = [
@@ -34,7 +34,7 @@ _THIRD_PERSON_FIXES = [
 
 
 class LLM:
-    def __init__(self, model: str = DEFAULT_MODEL, timeout: float = 240.0) -> None:
+    def __init__(self, model: str = DEFAULT_MODEL, timeout: float = 120.0) -> None:
         self.model = model
         self.timeout = timeout
         self._available: bool | None = None
@@ -56,8 +56,6 @@ class LLM:
         return self._available
 
     def _post(self, payload: dict) -> str:
-        # gpt-oss uses a different chat template; Ollama needs --jinja.
-        payload.setdefault("options", {})["jinja"] = True
         try:
             req = urllib.request.Request(
                 OLLAMA_URL,

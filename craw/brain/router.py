@@ -77,6 +77,7 @@ RAW_OUTPUT_TOOLS = {
     "run_shell",
     "read_web_page",
     "readings",
+    "write_code",
 }
 
 
@@ -84,7 +85,6 @@ RAW_OUTPUT_TOOLS = {
 # These can only be reached via a keyword route.
 LLM_FORBIDDEN_TOOLS = {
     "recall",
-    "write_code",
 }
 
 
