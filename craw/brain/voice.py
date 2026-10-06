@@ -4,8 +4,8 @@ Composes lines. LLM first, rules as silent fallback.
 
 Answer pipeline:
   1. route(question) — one decision: which tool, or none.
-  2. If the tool is write_code: ask for PLAIN CODE, not JSON.
-     The 3B model can't escape quotes in JSON strings, so we bypass it.
+  2. If the tool is write_code: generate code with a strict prompt,
+     validate it with py_compile, retry up to 3 times if invalid.
   3. Otherwise: execute the tool, feed the ACTUAL OUTPUT to the LLM,
      and compose the answer from that output alone.
 """
@@ -13,7 +13,11 @@ Answer pipeline:
 from __future__ import annotations
 
 import random
+import re
+import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 from craw.brain.context import build as build_context
 from craw.brain.llm import LLM
@@ -93,7 +97,7 @@ def answer(
         flush=True,
     )
 
-    # Step 1b — write_code is special: bypass JSON entirely.
+    # Step 1b — write_code is special: bypass JSON, validate, retry.
     if r.tool == "write_code":
         return _write_code_special(question, r, sys_prompt)
 
@@ -129,129 +133,156 @@ def _split_statements(code: str) -> str:
     """Best-effort repair for one-line Python from small models.
 
     Handles:
-        name = input("What is your name? ") print("Hello, " + name)
-    by inserting a newline before common statement-leading keywords
-    when they appear mid-line.
+        i = 1 while i <= 10: print(i) i += 1
+    by inserting newlines before common statement-leading keywords when
+    they appear after a digit, ")", or "]".
     """
-    import re
+    # First: semicolons always mean a newline in Python
+    code = code.replace("; ", "\n").replace(";", "\n")
 
-    lines = code.split("\n")
-    out = []
-
-    # Keywords that begin a new statement in Python. If one appears after
-    # a ")" or "]" or a bare identifier, it's almost certainly a new line.
     starters = [
-        "import ", "from ", "def ", "class ", "if ", "elif ", "else",
+        "import ", "from ", "def ", "class ", "if ", "elif ", "else:",
         "for ", "while ", "try:", "except", "finally", "with ",
-        "print(", "return ", "yield ", "raise ", "assert ", "pass",
-        "break", "continue", "global ", "nonlocal ", "del ",
+        "print(", "return ", "yield ", "raise ", "assert ",
         "input(", "open(",
     ]
 
+    lines = code.split("\n")
+    out = []
     for line in lines:
         if not line.strip():
             out.append(line)
             continue
-
-        # Look for a keyword that follows a ")" or "]" mid-line.
-        # Only split if the character right before the keyword is
-        # whitespace and the character before that is ")" or "]".
         modified = line
         for kw in starters:
-            pattern = re.compile(r"(?<=[\)\]])\s+(?=" + re.escape(kw) + r")")
-            modified = pattern.sub("\n", modified)
-
-        # Also handle "= ... print(" and similar assignment-then-statement
-        # patterns where there's no ")" boundary.
-        for kw in starters:
-            pattern = re.compile(
-                r"(?<=[a-zA-Z0-9_\"'])\s{2,}(?=" + re.escape(kw) + r")"
+            escaped = re.escape(kw)
+            # split after ) or ]
+            modified = re.sub(
+                r"(?<=[\)\]])\s+(?=" + escaped + r")",
+                "\n", modified,
             )
-            modified = pattern.sub("\n", modified)
-
+            # split after a double-space before keyword
+            modified = re.sub(
+                r"(?<=[a-zA-Z0-9_\"'])\s{2,}(?=" + escaped + r")",
+                "\n", modified,
+            )
+            # split after a digit before a keyword (catches "= 1 while")
+            modified = re.sub(
+                r"(?<=[0-9])\s+(?=" + escaped + r")",
+                "\n", modified,
+            )
         out.append(modified)
 
-    # Also handle the case where the whole thing is one long line with
-    # a single space between statements.
     joined = "\n".join(out)
-    for kw in starters:
-        joined = re.sub(
-            r"(?<=[\)\]])\s(?=" + re.escape(kw) + r")",
-            "\n",
-            joined,
-        )
-
-    # Collapse any accidental blank lines that resulted
     joined = re.sub(r"\n{3,}", "\n\n", joined)
     return joined.strip()
 
-def _write_code_special(question: str, r, sys_prompt: str) -> str:
-    """Handle write_code without going through JSON.
 
-    The 3B model can't escape quotes inside JSON strings. So instead of
-    asking it for {"tool": "write_code", "args": {"content": "..."}}, we
-    ask it for the raw code, then compose the args ourselves.
-    """
+def _try_compile(code: str) -> tuple[bool, str]:
+    """Compile the code with py_compile. Returns (ok, error_text)."""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(code)
+            tmp_path = f.name
+        result = subprocess.run(
+            [sys.executable, "-m", "py_compile", tmp_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        Path(tmp_path).unlink(missing_ok=True)
+        if result.returncode == 0:
+            return True, ""
+        return False, (result.stderr or "").strip()[:300]
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _write_code_special(question: str, r, sys_prompt: str) -> str:
+    """Handle write_code: strict prompt, py_compile validation, retry."""
     from craw.brain.tool_call import execute, ToolCall
 
     filename = ""
     if r.args and isinstance(r.args, dict):
         filename = str(r.args.get("path", "")).strip()
     if not filename:
-        # Fall back to a sensible default name
         filename = "script.py"
     if not filename.endswith(".py"):
         filename += ".py"
 
-    # Ask for the code with no wrappers at all.
-    code_prompt = (
+    base_prompt = (
         f"Write a complete Python file for this request.\n\n"
         f"Request: {question}\n\n"
-        f"STRICT FORMATTING RULES — VIOLATION IS NOT ACCEPTABLE:\n"
-        f"1. One statement per line. NEVER put two statements on one line.\n"
+        f"STRICT RULES — VIOLATION IS UNACCEPTABLE:\n"
+        f"1. One statement per line. NEVER two statements on one line.\n"
         f"2. Every statement ends with a newline.\n"
         f"3. Do NOT use semicolons between statements.\n"
-        f"4. NO markdown fences. NO backticks. NO triple backticks.\n"
-        f"5. Output ONLY the raw file. No explanation. No preface.\n\n"
-        f"CORRECT example:\n"
-        f"name = input(\"What is your name? \")\n"
-        f"print(\"Hello, \" + name)\n\n"
-        f"WRONG example (never do this):\n"
-        f"name = input(\"What is your name? \") print(\"Hello, \" + name)\n"
+        f"4. NO markdown fences. NO backticks.\n"
+        f"5. Output ONLY the raw file contents. No explanation.\n\n"
+        f"CORRECT:\n"
+        f"i = 1\n"
+        f"while i <= 10:\n"
+        f"    print(i)\n"
+        f"    i += 1\n\n"
+        f"WRONG (never do this):\n"
+        f"i = 1 while i <= 10: print(i) i += 1\n"
     )
-    code = _llm.generate(code_prompt, system=sys_prompt)
-    code = (code or "").strip()
 
-    # Repair common one-line output from small models.
-    code = _split_statements(code)
+    best_code = ""
+    last_error = ""
 
-    # Strip any markdown fence the model added anyway.
-    if code.startswith("```"):
-        first_nl = code.find("\n")
-        if first_nl != -1:
-            code = code[first_nl + 1:]
-        if code.endswith("```"):
-            code = code[:-3]
-    code = code.strip()
+    for attempt in range(3):
+        if attempt == 0:
+            prompt = base_prompt
+        else:
+            prompt = (
+                base_prompt
+                + "\n\nYOUR PREVIOUS ATTEMPT FAILED WITH THIS ERROR:\n"
+                + last_error
+                + "\n\nYour broken code was:\n"
+                + best_code
+                + "\n\nRewrite it correctly. One statement per line. "
+                  "Output ONLY the corrected code."
+            )
 
-    if not code:
-        return "i couldn't write the code. try rephrasing."
+        code = _llm.generate(prompt, system=sys_prompt)
+        code = (code or "").strip()
 
-    ok, result = execute(ToolCall(
-        name="write_code",
-        args={"path": filename, "content": code},
-    ))
+        # Strip fences
+        if code.startswith("```"):
+            first_nl = code.find("\n")
+            if first_nl != -1:
+                code = code[first_nl + 1:]
+            if code.endswith("```"):
+                code = code[:-3]
+        code = code.strip()
 
-    if not ok:
-        return _compose_failure("write_code", result, sys_prompt)
+        # Repair common one-liner patterns
+        code = _split_statements(code)
 
-    # Compose a one-line reply from the real result.
-    prompt = (
-        f"You used write_code. It returned:\n{result}\n\n"
-        f"Tell the user in ONE line, in your voice, what you wrote."
+        if not code:
+            last_error = "empty response"
+            continue
+
+        best_code = code
+
+        ok, err = _try_compile(code)
+        if ok:
+            # Valid Python — hand it to write_code.
+            ok2, msg = execute(ToolCall(
+                name="write_code",
+                args={"path": filename, "content": code},
+            ))
+            if not ok2:
+                return _compose_failure("write_code", msg, sys_prompt)
+            return msg  # "wrote X (N chars)"
+
+        last_error = err
+
+    return (
+        f"i tried to write {filename} 3 times but couldn't get valid python. "
+        f"last error: {last_error[:120]}"
     )
-    final = _llm.generate(prompt, system=sys_prompt)
-    return final or result
 
 
 def _compose_failure(tool: str, error: str, sys_prompt: str) -> str:
