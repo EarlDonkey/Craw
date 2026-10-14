@@ -57,6 +57,8 @@ KEYWORD_ROUTES: list[tuple[re.Pattern[str], str, dict[str, Any]]] = [
     (re.compile(r"\bwhat window\b", re.I),      "active_window", {}),
     (re.compile(r"\bwhat'?s? on my clipboard\b", re.I), "read_clipboard", {}),
     (re.compile(r"\b(top|what) processes\b", re.I), "list_processes", {}),
+    (re.compile(r"\bwho'?s (at|on) (the |my )?laptop\b", re.I), "who_is_at_the_laptop", {}),
+    (re.compile(r"\bwho is using\b", re.I), "who_is_at_the_laptop", {}),
 ]
 
 

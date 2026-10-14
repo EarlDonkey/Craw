@@ -423,6 +423,11 @@ def list_code(path: str = "") -> str:
         lines.append(f"{marker} {rel}")
     return "\n".join(lines)
 
+def who_is_at_the_laptop() -> str:
+    """Return who's at the laptop right now."""
+    from craw.senses.face import FaceSense
+    return FaceSense().who()
+
 
 # ---- browse --------------------------------------------------------------
 
@@ -561,6 +566,10 @@ def _register_all() -> None:
     REGISTRY.register(Tool("list_code", "list files in the code playground",
                            list_code, tier="auto",
                            args={"path": "string (optional)"}))
+    
+    REGISTRY.register(Tool("who_is_at_the_laptop",
+                       "check who's at the laptop via webcam",
+                       who_is_at_the_laptop, tier="auto"))
 
     # recall + browse
     REGISTRY.register(Tool("recall",
