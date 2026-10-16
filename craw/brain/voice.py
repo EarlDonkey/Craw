@@ -199,8 +199,16 @@ def _try_compile(code: str) -> tuple[bool, str]:
 
 
 def _write_code_special(question: str, r, sys_prompt: str) -> str:
-    """Handle write_code: strict prompt, py_compile validation, retry."""
+    """Handle write_code.
+
+    Flow:
+      1. If the router already produced valid Python, use it directly.
+      2. Otherwise, ask the LLM with a strict prompt, validate with
+         py_compile, retry up to 3 times.
+      3. If all attempts fail, report honestly.
+    """
     from craw.brain.tool_call import execute, ToolCall
+    from craw.hands.tools import _strip_fences
 
     filename = ""
     if r.args and isinstance(r.args, dict):
@@ -210,6 +218,23 @@ def _write_code_special(question: str, r, sys_prompt: str) -> str:
     if not filename.endswith(".py"):
         filename += ".py"
 
+    # ── Try the router's content first ──
+    router_content = ""
+    if r.args and isinstance(r.args, dict):
+        router_content = str(r.args.get("content", "")).strip()
+    if router_content:
+        router_content = _strip_fences(router_content)
+        ok, _err = _try_compile(router_content)
+        if ok:
+            ok2, msg = execute(ToolCall(
+                name="write_code",
+                args={"path": filename, "content": router_content},
+            ))
+            if ok2:
+                return msg
+            return _compose_failure("write_code", msg, sys_prompt)
+
+    # ── Fallback: ask the LLM with a strict prompt, validate, retry ──
     base_prompt = (
         f"Write a complete Python file for this request.\n\n"
         f"Request: {question}\n\n"
@@ -217,15 +242,14 @@ def _write_code_special(question: str, r, sys_prompt: str) -> str:
         f"1. One statement per line. NEVER two statements on one line.\n"
         f"2. Every statement ends with a newline.\n"
         f"3. Do NOT use semicolons between statements.\n"
-        f"4. NO markdown fences. NO backticks.\n"
-        f"5. Output ONLY the raw file contents. No explanation.\n\n"
-        f"CORRECT:\n"
-        f"i = 1\n"
-        f"while i <= 10:\n"
-        f"    print(i)\n"
-        f"    i += 1\n\n"
-        f"WRONG (never do this):\n"
-        f"i = 1 while i <= 10: print(i) i += 1\n"
+        f"4. NO markdown fences. NO backticks. NO ``` anywhere.\n"
+        f"5. Do NOT start with the word 'python' or any language name.\n"
+        f"6. Output ONLY the raw file contents. No explanation.\n\n"
+        f"CORRECT output:\n"
+        f"print(\"hello\")\n\n"
+        f"WRONG output:\n"
+        f"```python\nprint(\"hello\")\n```\n"
+        f"python print(\"hello\")\n"
     )
 
     best_code = ""
@@ -241,21 +265,15 @@ def _write_code_special(question: str, r, sys_prompt: str) -> str:
                 + last_error
                 + "\n\nYour broken code was:\n"
                 + best_code
-                + "\n\nRewrite it correctly. One statement per line. "
-                  "Output ONLY the corrected code."
+                + "\n\nRewrite it correctly. NO backticks. NO 'python' prefix. "
+                  "One statement per line. Output ONLY the corrected code."
             )
 
         code = _llm.generate(prompt, system=sys_prompt)
         code = (code or "").strip()
 
-        # Strip fences
-        if code.startswith("```"):
-            first_nl = code.find("\n")
-            if first_nl != -1:
-                code = code[first_nl + 1:]
-            if code.endswith("```"):
-                code = code[:-3]
-        code = code.strip()
+        # Strip fences and language tags
+        code = _strip_fences(code)
 
         # Repair common one-liner patterns
         code = _split_statements(code)
@@ -268,14 +286,13 @@ def _write_code_special(question: str, r, sys_prompt: str) -> str:
 
         ok, err = _try_compile(code)
         if ok:
-            # Valid Python — hand it to write_code.
             ok2, msg = execute(ToolCall(
                 name="write_code",
                 args={"path": filename, "content": code},
             ))
             if not ok2:
                 return _compose_failure("write_code", msg, sys_prompt)
-            return msg  # "wrote X (N chars)"
+            return msg
 
         last_error = err
 

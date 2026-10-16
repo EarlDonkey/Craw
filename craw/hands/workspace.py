@@ -2,8 +2,8 @@
 
 Two writable roots:
 
-  1. WORKSPACE  — .craw/workspace/                     (internal notes)
-  2. CODE_ROOT  — C:/Users/user/Desktop/Playground     (real code projects)
+  1. WORKSPACE  — .craw/workspace/                 (internal notes)
+  2. CODE_ROOT  — <USERPROFILE>/Craw/playground    (real code projects)
 
 Everything else on the filesystem is read-only for Craw's write tools.
 
@@ -17,13 +17,22 @@ Path safety rules:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from craw.state import CRAW_HOME
 
 WORKSPACE = (CRAW_HOME / "workspace").resolve()
 MAX_FILE_BYTES = 256 * 1024
-DEFAULT_CODE_ROOT = Path(r"C:\Users\user\Desktop\Playground").resolve()
+
+
+def _default_code_root() -> Path:
+    """Where Craw writes code. Home-relative by default, overridable."""
+    home = Path(os.environ.get("USERPROFILE", Path.home()))
+    return (home / "Craw" / "playground").resolve()
+
+
+DEFAULT_CODE_ROOT = _default_code_root()
 
 
 def _code_root() -> Path:

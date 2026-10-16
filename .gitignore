@@ -1,6 +1,10 @@
 # Craw's body — private, local, not code
 .craw/
 
+# Biometric data — NEVER commit
+*.npy
+face.npy
+
 # Python
 __pycache__/
 *.py[cod]
@@ -17,6 +21,10 @@ env/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+
+# Logs
+*.log
+*.log.1
 
 # Editors / OS
 .vscode/

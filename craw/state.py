@@ -95,7 +95,23 @@ class State:
             s = cls()
             s.save()
             return s
-        data = json.loads(STATE_PATH.read_text())
+        try:
+            raw = STATE_PATH.read_text(encoding="utf-8").strip()
+            if not raw:
+                s = cls()
+                s.save()
+                return s
+            data = json.loads(raw)
+        except (OSError, json.JSONDecodeError):
+            # Corrupt or unreadable. Back it up and start fresh.
+            try:
+                backup = STATE_PATH.with_suffix(".json.corrupt")
+                STATE_PATH.rename(backup)
+            except OSError:
+                pass
+            s = cls()
+            s.save()
+            return s
         # Tolerate schema drift: drop keys we no longer have.
         valid = {f.name for f in cls.__dataclass_fields__.values()}
         data = {k: v for k, v in data.items() if k in valid}

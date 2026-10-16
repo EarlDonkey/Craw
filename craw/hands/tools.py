@@ -17,10 +17,25 @@ import webbrowser
 from pathlib import Path
 
 from craw.hands.registry import REGISTRY, Tool
+from craw.state import CRAW_HOME
 
 
 HOME = Path(os.environ.get("USERPROFILE", Path.home()))
-SCREENSHOT_DIR = HOME / "Downloads" / "Craw" / ".craw" / "screenshots"
+SCREENSHOT_DIR = CRAW_HOME / "screenshots"
+
+
+def _find_app(paths: list[str]) -> str | None:
+    """Return the first existing path in the list, or None."""
+    for p in paths:
+        if Path(p).exists():
+            return p
+    return None
+
+
+_APPDATA = os.environ.get("APPDATA", "")
+_LOCALAPPDATA = os.environ.get("LOCALAPPDATA", "")
+_PROGRAMFILES = os.environ.get("ProgramFiles", r"C:\Program Files")
+_PROGRAMFILES_X86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
 
 ALLOWED_APPS: dict[str, str] = {
     "notepad":      "notepad.exe",
@@ -31,12 +46,31 @@ ALLOWED_APPS: dict[str, str] = {
     "taskmgr":      "taskmgr.exe",
     "cmd":          "cmd.exe",
     "powershell":   "powershell.exe",
-    "chrome":       r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-    "edge":         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
     "vscode":       "code",
     "code":         "code",
-    "spotify":      r"C:\Users\user\AppData\Roaming\Spotify\Spotify.exe",
 }
+
+_chrome = _find_app([
+    rf"{_PROGRAMFILES}\Google\Chrome\Application\chrome.exe",
+    rf"{_PROGRAMFILES_X86}\Google\Chrome\Application\chrome.exe",
+    rf"{_LOCALAPPDATA}\Google\Chrome\Application\chrome.exe",
+])
+if _chrome:
+    ALLOWED_APPS["chrome"] = _chrome
+
+_edge = _find_app([
+    rf"{_PROGRAMFILES_X86}\Microsoft\Edge\Application\msedge.exe",
+    rf"{_PROGRAMFILES}\Microsoft\Edge\Application\msedge.exe",
+])
+if _edge:
+    ALLOWED_APPS["edge"] = _edge
+
+_spotify = _find_app([
+    rf"{_APPDATA}\Spotify\Spotify.exe",
+    rf"{_LOCALAPPDATA}\Microsoft\WindowsApps\Spotify.exe",
+])
+if _spotify:
+    ALLOWED_APPS["spotify"] = _spotify
 
 
 # ---- auto tier -----------------------------------------------------------
@@ -313,20 +347,28 @@ def list_workspace() -> str:
 # ---- code playground -----------------------------------------------------
 
 def _strip_fences(text: str) -> str:
-    """Remove markdown code fences from LLM output.
+    """Remove markdown code fences and stray language tags from LLM output.
 
-    Handles all these cases:
-
+    Handles:
         ```python\\ncode\\n```
         ```python code```
         ```\\ncode\\n```
         ```code```
-        code (no fences)
-        code```
-
-    Returns the bare content with the fence and language tag removed.
+        python code
+        python\\ncode
+        code (no fences, no tag)
     """
     text = text.strip()
+
+    # Strip a leading language tag if there's no fence (some models
+    # leak "python " or "python\\n" without backticks).
+    for tag in ("python3", "python", "py", "python code"):
+        if text.lower().startswith(tag + "\n"):
+            text = text[len(tag) + 1:]
+            break
+        if text.lower().startswith(tag + " "):
+            text = text[len(tag) + 1:]
+            break
 
     # Opening fence
     if text.startswith("```"):
@@ -335,14 +377,20 @@ def _strip_fences(text: str) -> str:
         nl = after.find("\n")
         sp = after.find(" ")
         if nl != -1 and (sp == -1 or nl < sp):
-            # multi-line fence: strip through the newline
             text = after[nl + 1:]
         elif sp != -1:
-            # one-line fence with language tag: strip through the space
             text = after[sp + 1:]
         else:
-            # bare ``` with no language tag, no space
             text = after
+
+    # Strip a language tag again, in case the fence removal left one
+    for tag in ("python3", "python", "py"):
+        if text.lower().startswith(tag + "\n"):
+            text = text[len(tag) + 1:]
+            break
+        if text.lower().startswith(tag + " "):
+            text = text[len(tag) + 1:]
+            break
 
     # Closing fence
     text = text.rstrip()
@@ -422,6 +470,7 @@ def list_code(path: str = "") -> str:
         marker = "[dir]" if e.is_dir() else "     "
         lines.append(f"{marker} {rel}")
     return "\n".join(lines)
+
 
 def who_is_at_the_laptop() -> str:
     """Return who's at the laptop right now."""
@@ -566,10 +615,10 @@ def _register_all() -> None:
     REGISTRY.register(Tool("list_code", "list files in the code playground",
                            list_code, tier="auto",
                            args={"path": "string (optional)"}))
-    
+
     REGISTRY.register(Tool("who_is_at_the_laptop",
-                       "check who's at the laptop via webcam",
-                       who_is_at_the_laptop, tier="auto"))
+                           "check who's at the laptop via webcam",
+                           who_is_at_the_laptop, tier="auto"))
 
     # recall + browse
     REGISTRY.register(Tool("recall",
