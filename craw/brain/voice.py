@@ -134,10 +134,10 @@ def _split_statements(code: str) -> str:
 
     Handles:
         i = 1 while i <= 10: print(i) i += 1
-    by inserting newlines before common statement-leading keywords when
-    they appear after a digit, ")", or "]".
+        while i <= 10: print(i) i += 1
+        for i in range(1, 6): print(i * i)
     """
-    # First: semicolons always mean a newline in Python
+    # semicolons always mean a newline in Python
     code = code.replace("; ", "\n").replace(";", "\n")
 
     starters = [
@@ -161,21 +161,92 @@ def _split_statements(code: str) -> str:
                 r"(?<=[\)\]])\s+(?=" + escaped + r")",
                 "\n", modified,
             )
-            # split after a double-space before keyword
+            # split after a double-space before a keyword
             modified = re.sub(
                 r"(?<=[a-zA-Z0-9_\"'])\s{2,}(?=" + escaped + r")",
                 "\n", modified,
             )
-            # split after a digit before a keyword (catches "= 1 while")
+            # split after a digit before a keyword
             modified = re.sub(
                 r"(?<=[0-9])\s+(?=" + escaped + r")",
                 "\n", modified,
             )
+        # split after ": " when followed by a keyword
+        for kw in starters:
+            escaped = re.escape(kw)
+            modified = re.sub(
+                r"(?<=: )\s*(?=" + escaped + r")",
+                "\n", modified,
+            )
+        # split after ") " when followed by ident= (assignment)
+        modified = re.sub(
+            r"(?<=\))\s+(?=[a-zA-Z_][a-zA-Z0-9_]*\s*[=+\-*/%])",
+            "\n", modified,
+        )
+        # split after ") " when followed by ident. (method chain)
+        modified = re.sub(
+            r"(?<=\))\s+(?=[a-zA-Z_][a-zA-Z0-9_]*\s*\.)",
+            "\n", modified,
+        )
         out.append(modified)
 
     joined = "\n".join(out)
     joined = re.sub(r"\n{3,}", "\n\n", joined)
     return joined.strip()
+
+
+def _auto_indent(code: str) -> str:
+    """Indent the body of loops/conditionals when the model forgot.
+
+    Works on flat code that has NO leading whitespace. If the input
+    already has meaningful indentation, this is a no-op.
+
+    Logic:
+      - A line ending in ":" that starts with while/for/if/elif/else/
+        try/except/finally/with/def/class pushes a new indent level.
+      - A line that begins with a top-level keyword (def, class,
+        import, from, or a comment) at the current level pops back
+        to the nearest top level.
+      - Empty lines keep their state.
+      - Everything else stays at the current level.
+    """
+    # If the source already has indentation, don't touch it.
+    for line in code.split("\n"):
+        if line and line != line.lstrip() and line.strip():
+            return code
+
+    lines = code.split("\n")
+    out: list[str] = []
+    indent = 0
+
+    top_level = ("def ", "class ", "import ", "from ",
+                 "if __name__", "#", "@")
+
+    for i, raw in enumerate(lines):
+        stripped = raw.strip()
+
+        if not stripped:
+            out.append("")
+            continue
+
+        # Top-level markers: pop indent to 0
+        if indent > 0 and any(stripped.startswith(k) for k in top_level):
+            indent = 0
+
+        out.append("    " * indent + stripped)
+
+        # If this line opens a block, indent the next line.
+        if stripped.endswith(":"):
+            indent += 1
+
+        # If the next line looks like a top-level sibling, pop back.
+        if i + 1 < len(lines):
+            nxt = lines[i + 1].strip()
+            if nxt and indent > 0:
+                if any(nxt.startswith(k) for k in top_level):
+                    indent = 0
+
+    return "\n".join(out)
 
 
 def _try_compile(code: str) -> tuple[bool, str]:
@@ -224,6 +295,8 @@ def _write_code_special(question: str, r, sys_prompt: str) -> str:
         router_content = str(r.args.get("content", "")).strip()
     if router_content:
         router_content = _strip_fences(router_content)
+        router_content = _split_statements(router_content)
+        router_content = _auto_indent(router_content)
         ok, _err = _try_compile(router_content)
         if ok:
             ok2, msg = execute(ToolCall(
@@ -238,18 +311,22 @@ def _write_code_special(question: str, r, sys_prompt: str) -> str:
     base_prompt = (
         f"Write a complete Python file for this request.\n\n"
         f"Request: {question}\n\n"
-        f"STRICT RULES — VIOLATION IS UNACCEPTABLE:\n"
-        f"1. One statement per line. NEVER two statements on one line.\n"
-        f"2. Every statement ends with a newline.\n"
-        f"3. Do NOT use semicolons between statements.\n"
-        f"4. NO markdown fences. NO backticks. NO ``` anywhere.\n"
-        f"5. Do NOT start with the word 'python' or any language name.\n"
-        f"6. Output ONLY the raw file contents. No explanation.\n\n"
-        f"CORRECT output:\n"
-        f"print(\"hello\")\n\n"
-        f"WRONG output:\n"
-        f"```python\nprint(\"hello\")\n```\n"
-        f"python print(\"hello\")\n"
+        f"CRITICAL: Python uses 4-space indentation for blocks. "
+        f"Every line inside a loop or if-statement MUST be indented. "
+        f"If you do not indent, the file will not run.\n\n"
+        f"Output ONLY the raw file contents. No explanation. "
+        f"No backticks. No 'python' prefix.\n\n"
+        f"CORRECT EXAMPLE — this is what you must produce:\n"
+        f"i = 1\n"
+        f"while i <= 10:\n"
+        f"    print(i)\n"
+        f"    i += 1\n\n"
+        f"WRONG — never do this:\n"
+        f"i = 1 while i <= 10: print(i) i += 1\n"
+        f"while i <= 10: print(i) i += 1\n"
+        f"while i <= 10:\n"
+        f"print(i)\n"
+        f"i += 1\n"
     )
 
     best_code = ""
@@ -261,12 +338,13 @@ def _write_code_special(question: str, r, sys_prompt: str) -> str:
         else:
             prompt = (
                 base_prompt
-                + "\n\nYOUR PREVIOUS ATTEMPT FAILED WITH THIS ERROR:\n"
+                + "\n\nYOUR PREVIOUS ATTEMPT FAILED. The exact error was:\n"
                 + last_error
                 + "\n\nYour broken code was:\n"
                 + best_code
-                + "\n\nRewrite it correctly. NO backticks. NO 'python' prefix. "
-                  "One statement per line. Output ONLY the corrected code."
+                + "\n\nREWRITE IT. Pay attention to indentation. "
+                  "Every line inside a while/for/if block must start "
+                  "with 4 spaces. Output ONLY the corrected code."
             )
 
         code = _llm.generate(prompt, system=sys_prompt)
@@ -277,6 +355,9 @@ def _write_code_special(question: str, r, sys_prompt: str) -> str:
 
         # Repair common one-liner patterns
         code = _split_statements(code)
+
+        # Add indentation for blocks the model left flat
+        code = _auto_indent(code)
 
         if not code:
             last_error = "empty response"
