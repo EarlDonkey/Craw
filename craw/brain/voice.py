@@ -200,15 +200,6 @@ def _auto_indent(code: str) -> str:
 
     Works on flat code that has NO leading whitespace. If the input
     already has meaningful indentation, this is a no-op.
-
-    Logic:
-      - A line ending in ":" that starts with while/for/if/elif/else/
-        try/except/finally/with/def/class pushes a new indent level.
-      - A line that begins with a top-level keyword (def, class,
-        import, from, or a comment) at the current level pops back
-        to the nearest top level.
-      - Empty lines keep their state.
-      - Everything else stays at the current level.
     """
     # If the source already has indentation, don't touch it.
     for line in code.split("\n"):
@@ -228,6 +219,16 @@ def _auto_indent(code: str) -> str:
         if not stripped:
             out.append("")
             continue
+
+        # Dedent else/elif to match the matching if/elif above.
+        if stripped.startswith(("else:", "elif ")):
+            for j in range(len(out) - 1, -1, -1):
+                prev_line = out[j]
+                prev_stripped = prev_line.strip()
+                if prev_stripped.startswith(("if ", "elif ")) and prev_stripped.endswith(":"):
+                    prev_indent = len(prev_line) - len(prev_line.lstrip())
+                    indent = prev_indent
+                    break
 
         # Top-level markers: pop indent to 0
         if indent > 0 and any(stripped.startswith(k) for k in top_level):
@@ -332,6 +333,9 @@ def _write_code_special(question: str, r, sys_prompt: str) -> str:
     best_code = ""
     last_error = ""
 
+    from craw.brain.llm import LLM, CODE_MODEL
+    code_llm = LLM(model=CODE_MODEL)
+
     for attempt in range(3):
         if attempt == 0:
             prompt = base_prompt
@@ -347,7 +351,7 @@ def _write_code_special(question: str, r, sys_prompt: str) -> str:
                   "with 4 spaces. Output ONLY the corrected code."
             )
 
-        code = _llm.generate(prompt, system=sys_prompt)
+        code = code_llm.generate(prompt, system=sys_prompt)
         code = (code or "").strip()
 
         # Strip fences and language tags
