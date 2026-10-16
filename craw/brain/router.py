@@ -7,6 +7,10 @@ hallucinate tool use. The router runs *first*, always.
 Output is one of:
   {"tool": "<name>", "args": {...}}    — call this tool
   {"tool": "none"}                      — conversational, no tool needed
+
+Fast-path keyword routes fire first. Only if nothing matches does the
+LLM get asked. This means unambiguous requests never depend on the
+model's mood or JSON parsing.
 """
 
 from __future__ import annotations
@@ -22,8 +26,8 @@ from craw.brain.llm import LLM
 from craw.hands import REGISTRY
 
 
-# Conversational questions that should NEVER route to a tool.
-# Checked BEFORE keyword routes and before the LLM.
+# ---- force-none: conversational questions never route to a tool ----
+
 _FORCE_NONE = [
     re.compile(r"\bhow are you\b", re.I),
     re.compile(r"\bhow do you feel\b", re.I),
@@ -37,14 +41,20 @@ _FORCE_NONE = [
 ]
 
 
-# Requests that reliably need a tool. Matched case-insensitively.
+# ---- keyword routes: unambiguous requests, no LLM needed ----
+
 KEYWORD_ROUTES: list[tuple[re.Pattern[str], str, dict[str, Any]]] = [
+    # time / date
     (re.compile(r"\bwhat time\b", re.I),        "tell_time", {}),
     (re.compile(r"\bwhat day\b", re.I),         "tell_date", {}),
     (re.compile(r"\bwhat date\b", re.I),        "tell_date", {}),
+
+    # memory recall
     (re.compile(r"\bwhat did i read about\b", re.I), "recall", {"query": "MATCH"}),
     (re.compile(r"\bwhat do you (know|remember) about\b", re.I), "recall", {"query": "MATCH"}),
     (re.compile(r"\baccording to what you read\b", re.I), "recall", {"query": "MATCH"}),
+
+    # file listing
     (re.compile(r"\blist (my )?downloads?\b", re.I), "list_dir",
      {"path": "%USERPROFILE%\\Downloads"}),
     (re.compile(r"\blist (my )?desktops?\b", re.I),   "list_dir",
@@ -53,12 +63,36 @@ KEYWORD_ROUTES: list[tuple[re.Pattern[str], str, dict[str, Any]]] = [
      {"path": "%USERPROFILE%\\Documents"}),
     (re.compile(r"\blist (my )?(playground|code)\b", re.I), "list_code", {}),
     (re.compile(r"\bwhat'?s in (my )?playground\b", re.I), "list_code", {}),
+
+    # system
     (re.compile(r"\bsystem (stats|status|doing)\b", re.I), "system_stats", {}),
     (re.compile(r"\bwhat window\b", re.I),      "active_window", {}),
     (re.compile(r"\bwhat'?s? on my clipboard\b", re.I), "read_clipboard", {}),
     (re.compile(r"\b(top|what) processes\b", re.I), "list_processes", {}),
+
+    # face sense
     (re.compile(r"\bwho'?s (at|on) (the |my )?laptop\b", re.I), "who_is_at_the_laptop", {}),
     (re.compile(r"\bwho is using\b", re.I), "who_is_at_the_laptop", {}),
+
+    # ---- write_code — file creation patterns ----
+    # Bare "write X.py" first — it's the most specific.
+    (re.compile(r"\bwrite [\w\-]+\.py\b", re.I),
+     "write_code", {"path": "MATCH_PATH", "content": ""}),
+    # "write a python file ..."
+    (re.compile(r"\bwrite (a |an |the )?(python|py|text|html|js|json|shell|bash)?\s*file\b", re.I),
+     "write_code", {"path": "MATCH_PATH", "content": ""}),
+    # "write a script ..."
+    (re.compile(r"\bwrite (a |an |the )?(python|py)?\s*script\b", re.I),
+     "write_code", {"path": "MATCH_PATH", "content": ""}),
+    # "create a file ..."
+    (re.compile(r"\bcreate (a |an |the )?(python|py|text|html|js)?\s*file\b", re.I),
+     "write_code", {"path": "MATCH_PATH", "content": ""}),
+    # "make a script/program/tool ..."
+    (re.compile(r"\bmake (a |an |the )?(python|py)?\s*(script|program|tool)\b", re.I),
+     "write_code", {"path": "MATCH_PATH", "content": ""}),
+    # "build a script/program/tool/file ..."
+    (re.compile(r"\bbuild (a |an |the )?(python|py)?\s*(script|program|tool|file)\b", re.I),
+     "write_code", {"path": "MATCH_PATH", "content": ""}),
 ]
 
 
@@ -98,10 +132,25 @@ class Route:
 
 
 def _expand_args(args: dict[str, Any], raw_question: str = "") -> dict[str, Any]:
+    """Fill in placeholders like MATCH and MATCH_PATH from the raw question."""
     out: dict[str, Any] = {}
     for k, v in args.items():
         if isinstance(v, str) and v == "MATCH":
             out[k] = raw_question
+
+        elif isinstance(v, str) and v == "MATCH_PATH":
+            # Try to extract a filename from the question.
+            # Priority:
+            #   1. "called <name>.py"
+            #   2. "called <name>"
+            #   3. any token ending in .py
+            m = re.search(r"called\s+([A-Za-z0-9_\-]+\.py)", raw_question)
+            if not m:
+                m = re.search(r"called\s+([A-Za-z0-9_\-]+)", raw_question)
+            if not m:
+                m = re.search(r"([A-Za-z0-9_\-]+\.py)", raw_question)
+            out[k] = (m.group(1) if m else "script.py")
+
         elif isinstance(v, str) and v.startswith("%USERPROFILE%"):
             out[k] = v.replace("%USERPROFILE%",
                                os.environ.get("USERPROFILE", ""))
@@ -114,7 +163,8 @@ def keyword_route(question: str) -> Route | None:
     """Fast-path: forced-none and keyword routes. None means try the LLM."""
     for pat in _FORCE_NONE:
         if pat.search(question):
-            return Route(tool=None, args={}, reason=f"forced-none: {pat.pattern}")
+            return Route(tool=None, args={},
+                         reason=f"forced-none: {pat.pattern}")
     for pattern, tool, args in KEYWORD_ROUTES:
         if pattern.search(question):
             return Route(tool=tool,
@@ -151,7 +201,9 @@ def llm_route(question: str, llm: LLM) -> Route:
         f'Reply with a single line of JSON: {{"tool": "<name>", "args": {{...}}}} or {{"tool": "none"}}\n\n'
         f"{tools_block}"
     )
-    raw = llm.generate_json(prompt, system="You are a tool router. Reply only with JSON.")
+    raw = llm.generate_json(prompt,
+                            system="You are a tool router. Reply only with JSON.")
+    print(f"[router-raw] {raw[:200]!r}", file=sys.stderr, flush=True)
     raw = (raw or "").strip()
 
     if not raw or raw.lower().strip(" .") in ("none", "silence"):
@@ -199,7 +251,8 @@ def route(question: str, llm: LLM) -> Route:
     """The one entry point. Keyword first, LLM if nothing matched."""
     kw = keyword_route(question)
     if kw is not None:
-        print(f"[router] {kw.reason} -> tool={kw.tool}", file=sys.stderr, flush=True)
+        print(f"[router] {kw.reason} -> tool={kw.tool}",
+              file=sys.stderr, flush=True)
         return kw
     r = llm_route(question, llm)
     print(f"[router] llm choice: {r.tool}  args={r.args}  reason={r.reason}",
