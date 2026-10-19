@@ -60,6 +60,7 @@ class Registry:
         return list(self._tools.keys())
 
     def prompt_block(self) -> str:
+        """Full tool list, grouped by tier. Used for chat-level prompts."""
         auto = [t for t in self._tools.values() if t.tier == "auto"]
         confirm = [t for t in self._tools.values() if t.tier == "confirm"]
 
@@ -71,6 +72,19 @@ class Registry:
             lines.append("Things you can do, but you must announce:")
             for t in confirm:
                 lines.append(t.schema_line())
+        return "\n".join(lines)
+
+    def prompt_block_for(self, names: list[str]) -> str:
+        """Filtered tool list — only the named tools.
+
+        Used by the router to narrow the options for a small model.
+        Fewer choices = fewer mistakes.
+        """
+        lines = ["Things you can do:"]
+        for name in names:
+            tool = self._tools.get(name)
+            if tool:
+                lines.append(tool.schema_line())
         return "\n".join(lines)
 
 

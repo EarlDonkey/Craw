@@ -41,6 +41,21 @@ _FORCE_NONE = [
 ]
 
 
+# Requests that MUST route to a specific tool, no LLM involved.
+# If any of these match, the route is fixed and the model is skipped.
+FORCE_TOOL: list[tuple[re.Pattern[str], str, dict[str, Any]]] = [
+    (re.compile(r"\b(what'?s?|what is) the time\b", re.I), "tell_time", {}),
+    (re.compile(r"\bwhat time is it\b", re.I),             "tell_time", {}),
+    (re.compile(r"\bwhat day is (it|today)\b", re.I),      "tell_date", {}),
+    (re.compile(r"\b(what is|tell me) (the )?date\b", re.I), "tell_date", {}),
+    (re.compile(r"\bhow much (ram|memory) (do i have|is used)\b", re.I),
+     "system_stats", {}),
+    (re.compile(r"\bwhat (is|are) (my )?(cpu|ram|disk)", re.I),
+     "system_stats", {}),
+    (re.compile(r"\bwhat window (am i|is)\b", re.I),       "active_window", {}),
+    (re.compile(r"\bwhat'?s? on my clipboard\b", re.I),    "read_clipboard", {}),
+]
+
 # ---- keyword routes: unambiguous requests, no LLM needed ----
 
 KEYWORD_ROUTES: list[tuple[re.Pattern[str], str, dict[str, Any]]] = [
@@ -161,23 +176,66 @@ def _expand_args(args: dict[str, Any], raw_question: str = "") -> dict[str, Any]
 
 def keyword_route(question: str) -> Route | None:
     """Fast-path: forced-none and keyword routes. None means try the LLM."""
+    # 1. Forced-none: conversational questions
     for pat in _FORCE_NONE:
         if pat.search(question):
             return Route(tool=None, args={},
                          reason=f"forced-none: {pat.pattern}")
+
+    # 2. Forced-tool: unambiguous tool requests
+    for pattern, tool, args in FORCE_TOOL:
+        if pattern.search(question):
+            return Route(tool=tool,
+                         args=_expand_args(args, question),
+                         reason=f"forced-tool: {pattern.pattern}")
+
+    # 3. Regular keyword routes
     for pattern, tool, args in KEYWORD_ROUTES:
         if pattern.search(question):
             return Route(tool=tool,
                          args=_expand_args(args, question),
                          reason=f"keyword: {pattern.pattern}")
+
     return None
+
+def _filter_tools_for_question(question: str) -> str:
+    """Return a filtered tool list for the LLM router.
+
+    Narrower options = better picks from small models.
+    """
+    q = question.lower()
+
+    # File-ish requests: file tools + browse
+    if any(w in q for w in ("file", "folder", "directory", "list", "read", "open")):
+        return REGISTRY.prompt_block_for([
+            "list_dir", "list_code", "read_file", "read_code",
+            "search_files", "open_path", "open_in_browser", "read_web_page",
+        ])
+
+    # System-ish requests
+    if any(w in q for w in ("system", "cpu", "ram", "disk", "memory", "process", "window")):
+        return REGISTRY.prompt_block_for([
+            "system_stats", "active_window", "list_processes",
+        ])
+
+    # Code-ish requests
+    if any(w in q for w in ("write", "code", "script", "program", "tool", "create", "make")):
+        return REGISTRY.prompt_block_for([
+            "write_code", "read_code", "list_code", "run_shell",
+        ])
+
+    # Everything else — chat-level tools only
+    return REGISTRY.prompt_block_for([
+        "read_web_page", "recall", "tell_time", "tell_date",
+    ])
 
 
 def llm_route(question: str, llm: LLM) -> Route:
     if not llm.available():
         return Route(tool=None, args={}, reason="no llm")
 
-    tools_block = REGISTRY.prompt_block()
+    tools_block = _filter_tools_for_question(question)
+
     prompt = (
         f"Request: {question}\n\n"
         f"You are a ROUTER. Your only job is to pick a tool or say NONE.\n\n"

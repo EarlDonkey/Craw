@@ -71,8 +71,12 @@ def build(
     recent_convo = memory.recent("conversation", limit=6)
     if recent_convo:
         lines.append("Recent exchanges:")
-        for e in recent_convo:
-            lines.append(f"  - {e.text}")
+        for e in reversed(recent_convo):
+            who = e.meta.get("who", "?")
+            if who == "user":
+                lines.append(f"  user: {e.text}")
+            elif who == "craw":
+                lines.append(f"  craw: {e.text}")
         lines.append("")
 
     recent_thoughts = memory.recent("thought", limit=5)
